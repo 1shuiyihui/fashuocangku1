@@ -16,6 +16,46 @@ QUESTION_TYPES = ["单选", "多选", "简答", "论述", "案例分析"]
 MISTAKE_REASONS = ["概念混淆", "要件遗漏", "法条不熟", "案例事实误判", "记忆不牢", "表达不规范"]
 MASTERY_LEVELS = ["陌生", "模糊", "基本会", "熟练"]
 PAGES = ["今日学习", "错题/薄弱点录入", "苏格拉底训练", "模板管理", "薄弱点分析", "周度/月度复盘"]
+BEGINNER_MODE_DEFAULT = True
+
+
+def get_next_action(
+    weak_points: list[dict[str, object]],
+    sessions: list[dict[str, object]],
+) -> dict[str, str]:
+    if not weak_points:
+        return {
+            "title": "先录入一个薄弱点",
+            "detail": "只需要填写科目、题型、考点、错因和掌握度，照片和题干可以后补。",
+            "page": "错题/薄弱点录入",
+        }
+
+    active_sessions = [session for session in sessions if session.get("status") == "active"]
+    if active_sessions:
+        return {
+            "title": "继续当前训练",
+            "detail": "已有训练正在进行，可以继续回答，也可以结束训练并保存复盘。",
+            "page": "苏格拉底训练",
+        }
+
+    finished_sessions = [session for session in sessions if session.get("status") == "finished"]
+    if finished_sessions:
+        return {
+            "title": "看一次复盘",
+            "detail": "已有训练记录，先查看周度/月度复盘，再决定下一轮训练重点。",
+            "page": "周度/月度复盘",
+        }
+
+    first_point = weak_points[0]
+    return {
+        "title": "开始一次苏格拉底训练",
+        "detail": f"建议先训练：{first_point.get('knowledge_point', '')}（{first_point.get('mastery_level', '')}）。",
+        "page": "苏格拉底训练",
+    }
+
+
+def should_show_prompt_editor(beginner_mode: bool, advanced_enabled: bool) -> bool:
+    return advanced_enabled or not beginner_mode
 
 
 @st.cache_resource
@@ -55,20 +95,29 @@ def main() -> None:
 
 
 def render_sidebar() -> None:
-    st.sidebar.header("AI 配置")
-    st.session_state["api_base"] = st.sidebar.text_input(
-        "API Base",
-        value=st.session_state.get("api_base", "https://api.openai.com/v1"),
+    st.session_state["beginner_mode"] = st.sidebar.checkbox(
+        "新手模式",
+        value=st.session_state.get("beginner_mode", BEGINNER_MODE_DEFAULT),
+        help="默认隐藏提示词编辑等高级选项；需要细调模板时可以关闭。",
     )
-    st.session_state["model"] = st.sidebar.text_input(
-        "Model",
-        value=st.session_state.get("model", "gpt-4.1-mini"),
-    )
-    st.session_state["api_key"] = st.sidebar.text_input(
-        "API Key",
-        value=st.session_state.get("api_key", ""),
-        type="password",
-    )
+    st.sidebar.caption("推荐顺序：录入薄弱点 → 苏格拉底训练 → 周度/月度复盘")
+    with st.sidebar.expander(
+        "AI 配置",
+        expanded=not st.session_state["beginner_mode"],
+    ):
+        st.session_state["api_base"] = st.text_input(
+            "API Base",
+            value=st.session_state.get("api_base", "https://api.openai.com/v1"),
+        )
+        st.session_state["model"] = st.text_input(
+            "Model",
+            value=st.session_state.get("model", "gpt-4.1-mini"),
+        )
+        st.session_state["api_key"] = st.text_input(
+            "API Key",
+            value=st.session_state.get("api_key", ""),
+            type="password",
+        )
 
 
 def page_today(store: Storage) -> None:
@@ -82,6 +131,10 @@ def page_today(store: Storage) -> None:
     col2.metric("训练次数", stats["total_sessions"])
     col3.metric("完成训练", stats["finished_sessions"])
 
+    action = get_next_action(weak_points, sessions)
+    st.info(f"{action['title']}：{action['detail']}")
+    st.caption(f"下一步：在左侧页面选择「{action['page']}」。")
+
     st.subheader("建议优先处理")
     if stats["low_mastery"]:
         for row in stats["low_mastery"][:5]:
@@ -94,16 +147,41 @@ def page_today(store: Storage) -> None:
 
 def page_entry(store: Storage) -> None:
     st.title("错题/薄弱点录入")
+    st.caption("第一次录入只填核心字段即可；照片、题干和参考答案都可以后补。")
     with st.form("weak_point_form", clear_on_submit=True):
-        uploaded_file = st.file_uploader("错题照片", type=["png", "jpg", "jpeg", "webp"])
-        subject = st.selectbox("科目", SUBJECTS)
+        uploaded_file = st.file_uploader(
+            "错题照片",
+            type=["png", "jpg", "jpeg", "webp"],
+            help="实体书拍照即可；第一版先做留档，不强制 OCR。",
+        )
+        subject = st.selectbox("科目", SUBJECTS, help="不知道归类时，先按你做题册所在科目选。")
         question_type = st.selectbox("题型", QUESTION_TYPES)
-        knowledge_point = st.text_input("考点")
-        mistake_reason = st.selectbox("错因", MISTAKE_REASONS)
-        mastery_level = st.selectbox("掌握度", MASTERY_LEVELS)
-        question_text = st.text_area("题干，可选", height=120)
-        reference_answer = st.text_area("参考答案，可选", height=120)
-        notes = st.text_area("备注，可选", height=80)
+        knowledge_point = st.text_input(
+            "考点",
+            placeholder="例如：共同犯罪、表见代理、宪法监督",
+            help="写一个短考点名即可，不用复制完整题干。",
+        )
+        mistake_reason = st.selectbox(
+            "错因",
+            MISTAKE_REASONS,
+            help="不确定就选最接近的，后续训练会继续暴露真正问题。",
+        )
+        mastery_level = st.selectbox(
+            "掌握度",
+            MASTERY_LEVELS,
+            help="按直觉选：看见就不会是陌生，说不清是模糊，能做但不稳是基本会。",
+        )
+        question_text = st.text_area(
+            "题干，可选",
+            height=120,
+            placeholder="可以先空着；后面需要案例分析时再补。",
+        )
+        reference_answer = st.text_area(
+            "参考答案，可选",
+            height=120,
+            placeholder="可以粘贴答案或写采分点。",
+        )
+        notes = st.text_area("备注，可选", height=80, placeholder="例如：书名、页码、题号。")
         submitted = st.form_submit_button("保存薄弱点")
 
     if submitted:
@@ -136,10 +214,11 @@ def page_entry(store: Storage) -> None:
 
 def page_training(store: Storage) -> None:
     st.title("苏格拉底训练")
+    beginner_mode = st.session_state.get("beginner_mode", BEGINNER_MODE_DEFAULT)
     weak_points = store.list_weak_points()
     templates = store.list_templates()
     if not weak_points:
-        st.info("请先录入错题或薄弱点。")
+        st.info("请先去「错题/薄弱点录入」保存一个考点。只填科目、题型、考点、错因和掌握度即可。")
         return
     if not templates:
         st.warning("没有启用中的模板，请先在模板管理中启用模板。")
@@ -152,8 +231,18 @@ def page_training(store: Storage) -> None:
     )
     template = st.selectbox("选择追问模板", templates, format_func=lambda row: row["name"])
     student_goal = st.text_input("本次训练目标", value=template["default_goal"])
-    prompt_override = st.text_area("本次提示词，可临时修改", value=template["body"], height=220)
-    save_as = st.text_input("保存为新模板名称，可留空")
+    advanced_enabled = st.checkbox(
+        "我要临时修改本次提示词",
+        value=not beginner_mode,
+        help="第一次使用建议不勾选，直接使用内置模板。",
+    )
+    if should_show_prompt_editor(beginner_mode, advanced_enabled):
+        prompt_override = st.text_area("本次提示词，可临时修改", value=template["body"], height=220)
+        save_as = st.text_input("保存为新模板名称，可留空")
+    else:
+        prompt_override = template["body"]
+        save_as = ""
+        st.caption("当前使用内置模板；需要改追问方式时再勾选上面的高级编辑。")
     recent_weaknesses = [row["knowledge_point"] for row in weak_points[:5]]
     prompt_snapshot = build_training_prompt(
         weak_point=weak_point,
@@ -253,6 +342,8 @@ def page_training(store: Storage) -> None:
 
 def page_templates(store: Storage) -> None:
     st.title("模板管理")
+    beginner_mode = st.session_state.get("beginner_mode", BEGINNER_MODE_DEFAULT)
+    st.caption("不会改模板也可以跳过本页；内置模板已经可以直接用于训练。")
     templates = store.list_templates(active_only=False)
     if templates:
         selected = st.selectbox(
@@ -260,40 +351,41 @@ def page_templates(store: Storage) -> None:
             templates,
             format_func=lambda row: f"{row['name']} v{row['current_version']}",
         )
-        with st.form("template_edit_form"):
-            name = st.text_input("模板名称", value=selected["name"])
-            subject_scope = st.text_input("适用科目", value=selected["subject_scope"])
-            question_type_scope = st.text_input("适用题型", value=selected["question_type_scope"])
-            body = st.text_area("模板正文", value=selected["body"], height=260)
-            default_goal = st.text_area("默认训练目标", value=selected["default_goal"], height=80)
-            end_condition = st.text_area("结束条件", value=selected["end_condition"], height=80)
-            is_active = st.checkbox("启用", value=bool(selected["is_active"]))
-            save = st.form_submit_button("保存新版本")
-        if save:
-            try:
-                store.update_template(
-                    selected["id"],
-                    {
-                        "name": name,
-                        "subject_scope": subject_scope,
-                        "question_type_scope": question_type_scope,
-                        "body": body,
-                        "default_goal": default_goal,
-                        "end_condition": end_condition,
-                        "is_active": is_active,
-                    },
-                )
-                st.success("已保存模板新版本。")
-            except IntegrityError:
-                st.error("模板名称已存在，请换一个名称。")
+        with st.expander("编辑当前模板", expanded=not beginner_mode):
+            with st.form("template_edit_form"):
+                name = st.text_input("模板名称", value=selected["name"])
+                subject_scope = st.text_input("适用科目", value=selected["subject_scope"])
+                question_type_scope = st.text_input("适用题型", value=selected["question_type_scope"])
+                body = st.text_area("模板正文", value=selected["body"], height=260)
+                default_goal = st.text_area("默认训练目标", value=selected["default_goal"], height=80)
+                end_condition = st.text_area("结束条件", value=selected["end_condition"], height=80)
+                is_active = st.checkbox("启用", value=bool(selected["is_active"]))
+                save = st.form_submit_button("保存新版本")
+            if save:
+                try:
+                    store.update_template(
+                        selected["id"],
+                        {
+                            "name": name,
+                            "subject_scope": subject_scope,
+                            "question_type_scope": question_type_scope,
+                            "body": body,
+                            "default_goal": default_goal,
+                            "end_condition": end_condition,
+                            "is_active": is_active,
+                        },
+                    )
+                    st.success("已保存模板新版本。")
+                except IntegrityError:
+                    st.error("模板名称已存在，请换一个名称。")
 
-        copy_name = st.text_input("复制为新模板名称", value=f"{selected['name']} 副本")
-        if st.button("复制模板"):
-            try:
-                store.copy_template(selected["id"], copy_name)
-                st.success("已复制模板。")
-            except IntegrityError:
-                st.error("模板名称已存在，请换一个名称。")
+            copy_name = st.text_input("复制为新模板名称", value=f"{selected['name']} 副本")
+            if st.button("复制模板"):
+                try:
+                    store.copy_template(selected["id"], copy_name)
+                    st.success("已复制模板。")
+                except IntegrityError:
+                    st.error("模板名称已存在，请换一个名称。")
 
     st.subheader("新建模板")
     with st.form("template_create_form"):
