@@ -112,3 +112,60 @@ def test_copy_template_creates_independent_template(storage):
     assert copied["name"].endswith("副本")
     assert copied["body"] == template["body"]
     assert copied["id"] != template["id"]
+
+
+def test_document_chunks_course_and_lesson_import(storage):
+    document_id = storage.create_document(
+        {
+            "filename": "刑法讲义.txt",
+            "file_type": ".txt",
+            "file_path": "data/documents/xingfa.txt",
+            "status": "uploaded",
+        }
+    )
+    storage.update_document_processing(
+        document_id,
+        text_content="共同犯罪要求二人以上共同故意实施犯罪。",
+        status="ready",
+    )
+    storage.replace_document_chunks(
+        document_id,
+        [
+            {"content": "共同犯罪要求二人以上共同故意实施犯罪。", "source_label": "刑法讲义.txt#1"},
+            {"content": "犯罪中止要求自动放弃犯罪或者自动有效防止结果发生。", "source_label": "刑法讲义.txt#2"},
+        ],
+    )
+
+    document = storage.get_document(document_id)
+    chunks = storage.list_document_chunks(document_id)
+
+    assert document["status"] == "ready"
+    assert len(chunks) == 2
+    assert chunks[0]["source_label"] == "刑法讲义.txt#1"
+
+    query_id = storage.create_rag_query("共同犯罪", [chunks[0]["id"]])
+    assert query_id > 0
+
+    course_id = storage.create_course(
+        title="刑法共同犯罪冲刺课",
+        source_document_id=document_id,
+        raw_json='{"title":"刑法共同犯罪冲刺课"}',
+        lessons=[
+            {
+                "title": "共同犯罪成立条件",
+                "objective": "掌握共同犯罪的成立要件",
+                "knowledge_points": ["共同犯罪"],
+                "mistake_risks": ["遗漏共同故意"],
+                "recommended_template": "构成要件追问",
+                "review_plan": "第 1 天完成追问，第 3 天复盘。",
+            }
+        ],
+    )
+    lessons = storage.list_course_lessons(course_id)
+    weak_point_id = storage.import_lesson_as_weak_point(lessons[0]["id"], subject="刑法")
+    imported = storage.get_weak_point(weak_point_id)
+    updated_lesson = storage.list_course_lessons(course_id)[0]
+
+    assert imported["knowledge_point"] == "共同犯罪"
+    assert imported["mistake_reason"] == "遗漏共同故意"
+    assert updated_lesson["imported_weak_point_id"] == weak_point_id

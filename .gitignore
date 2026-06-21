@@ -6,4 +6,5 @@ venv/
 .env
 data/fashuo.db
 data/uploads/
+data/documents/
 logs/

@@ -3,3 +3,7 @@ pandas>=2.2
 requests>=2.32
 python-dotenv>=1.0
 pytest>=8.2
+pypdf>=5.0
+pillow>=10.0
+pytesseract>=0.3.13
+scikit-learn>=1.5

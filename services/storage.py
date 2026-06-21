@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import sqlite3
 from datetime import datetime, timezone
@@ -14,13 +15,16 @@ class Storage:
         self,
         db_path: Path | str = "data/fashuo.db",
         uploads_dir: Path | str = "data/uploads",
+        documents_dir: Path | str = "data/documents",
     ):
         self.db_path = Path(db_path)
         self.uploads_dir = Path(uploads_dir)
+        self.documents_dir = Path(documents_dir)
 
     def connect(self) -> sqlite3.Connection:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.uploads_dir.mkdir(parents=True, exist_ok=True)
+        self.documents_dir.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
@@ -96,6 +100,59 @@ class Storage:
                     created_at TEXT NOT NULL,
                     FOREIGN KEY(session_id) REFERENCES sessions(id)
                 );
+
+                CREATE TABLE IF NOT EXISTS documents (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    filename TEXT NOT NULL,
+                    file_type TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    text_content TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL,
+                    error_message TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS document_chunks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    document_id INTEGER NOT NULL,
+                    chunk_index INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    source_label TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(document_id) REFERENCES documents(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS generated_courses (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    source_document_id INTEGER,
+                    raw_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(source_document_id) REFERENCES documents(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS course_lessons (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    course_id INTEGER NOT NULL,
+                    lesson_index INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    objective TEXT NOT NULL,
+                    knowledge_points TEXT NOT NULL,
+                    mistake_risks TEXT NOT NULL,
+                    recommended_template TEXT NOT NULL,
+                    review_plan TEXT NOT NULL,
+                    imported_weak_point_id INTEGER,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(course_id) REFERENCES generated_courses(id),
+                    FOREIGN KEY(imported_weak_point_id) REFERENCES weak_points(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS rag_queries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    query TEXT NOT NULL,
+                    result_chunk_ids TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
                 """
             )
 
@@ -150,6 +207,108 @@ class Storage:
         with target.open("wb") as handle:
             shutil.copyfileobj(uploaded_file, handle)
         return str(target)
+
+    def save_document_upload(self, uploaded_file: Any) -> str:
+        if uploaded_file is None:
+            return ""
+        suffix = Path(uploaded_file.name).suffix
+        stem = Path(uploaded_file.name).stem or "document"
+        target = self.documents_dir / f"{stem}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}{suffix}"
+        self.documents_dir.mkdir(parents=True, exist_ok=True)
+        with target.open("wb") as handle:
+            shutil.copyfileobj(uploaded_file, handle)
+        return str(target)
+
+    def create_document(self, payload: dict[str, Any]) -> int:
+        with self.connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO documents
+                (filename, file_type, file_path, text_content, status, error_message, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    payload["filename"],
+                    payload["file_type"],
+                    payload["file_path"],
+                    payload.get("text_content", ""),
+                    payload["status"],
+                    payload.get("error_message", ""),
+                    self._now(),
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def update_document_processing(
+        self,
+        document_id: int,
+        text_content: str,
+        status: str,
+        error_message: str = "",
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE documents
+                SET text_content = ?, status = ?, error_message = ?
+                WHERE id = ?
+                """,
+                (text_content, status, error_message, document_id),
+            )
+
+    def list_documents(self) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute("SELECT * FROM documents ORDER BY created_at DESC").fetchall()
+            return [self._dict(row) for row in rows]
+
+    def get_document(self, document_id: int) -> dict[str, Any]:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM documents WHERE id = ?", (document_id,)).fetchone()
+            if row is None:
+                raise KeyError(f"document not found: {document_id}")
+            return self._dict(row)
+
+    def replace_document_chunks(self, document_id: int, chunks: list[dict[str, Any] | str]) -> None:
+        now = self._now()
+        with self.connect() as conn:
+            conn.execute("DELETE FROM document_chunks WHERE document_id = ?", (document_id,))
+            for index, chunk in enumerate(chunks, start=1):
+                if isinstance(chunk, str):
+                    content = chunk
+                    source_label = f"document:{document_id}#{index}"
+                else:
+                    content = chunk["content"]
+                    source_label = chunk.get("source_label", f"document:{document_id}#{index}")
+                conn.execute(
+                    """
+                    INSERT INTO document_chunks
+                    (document_id, chunk_index, content, source_label, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (document_id, index, content, source_label, now),
+                )
+
+    def list_document_chunks(self, document_id: int | None = None) -> list[dict[str, Any]]:
+        if document_id is None:
+            query = "SELECT * FROM document_chunks ORDER BY document_id DESC, chunk_index"
+            params: tuple[Any, ...] = ()
+        else:
+            query = "SELECT * FROM document_chunks WHERE document_id = ? ORDER BY chunk_index"
+            params = (document_id,)
+        with self.connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+            return [self._dict(row) for row in rows]
+
+    def create_rag_query(self, query: str, chunk_ids: list[int]) -> int:
+        with self.connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO rag_queries (query, result_chunk_ids, created_at)
+                VALUES (?, ?, ?)
+                """,
+                (query, json.dumps(chunk_ids, ensure_ascii=False), self._now()),
+            )
+            return int(cur.lastrowid)
 
     def create_weak_point(self, payload: dict[str, Any]) -> int:
         now = self._now()
@@ -389,6 +548,109 @@ class Storage:
                     session_id,
                 ),
             )
+
+    def create_course(
+        self,
+        title: str,
+        source_document_id: int | None,
+        raw_json: str,
+        lessons: list[dict[str, Any]],
+    ) -> int:
+        now = self._now()
+        with self.connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO generated_courses
+                (title, source_document_id, raw_json, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (title, source_document_id, raw_json, now),
+            )
+            course_id = int(cur.lastrowid)
+            for index, lesson in enumerate(lessons, start=1):
+                conn.execute(
+                    """
+                    INSERT INTO course_lessons
+                    (course_id, lesson_index, title, objective, knowledge_points, mistake_risks,
+                     recommended_template, review_plan, imported_weak_point_id, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+                    """,
+                    (
+                        course_id,
+                        index,
+                        lesson.get("title", f"第 {index} 课"),
+                        lesson.get("objective", ""),
+                        json.dumps(lesson.get("knowledge_points", []), ensure_ascii=False),
+                        json.dumps(lesson.get("mistake_risks", []), ensure_ascii=False),
+                        lesson.get("recommended_template", "构成要件追问"),
+                        lesson.get("review_plan", ""),
+                        now,
+                    ),
+                )
+            return course_id
+
+    def list_courses(self) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute("SELECT * FROM generated_courses ORDER BY created_at DESC").fetchall()
+            return [self._dict(row) for row in rows]
+
+    def get_course(self, course_id: int) -> dict[str, Any]:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM generated_courses WHERE id = ?", (course_id,)).fetchone()
+            if row is None:
+                raise KeyError(f"course not found: {course_id}")
+            return self._dict(row)
+
+    def list_course_lessons(self, course_id: int) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM course_lessons WHERE course_id = ? ORDER BY lesson_index",
+                (course_id,),
+            ).fetchall()
+            lessons = [self._dict(row) for row in rows]
+        for lesson in lessons:
+            lesson["knowledge_points"] = json.loads(lesson["knowledge_points"] or "[]")
+            lesson["mistake_risks"] = json.loads(lesson["mistake_risks"] or "[]")
+        return lessons
+
+    def get_course_lesson(self, lesson_id: int) -> dict[str, Any]:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM course_lessons WHERE id = ?", (lesson_id,)).fetchone()
+            if row is None:
+                raise KeyError(f"course lesson not found: {lesson_id}")
+            lesson = self._dict(row)
+        lesson["knowledge_points"] = json.loads(lesson["knowledge_points"] or "[]")
+        lesson["mistake_risks"] = json.loads(lesson["mistake_risks"] or "[]")
+        return lesson
+
+    def mark_lesson_imported(self, lesson_id: int, weak_point_id: int) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE course_lessons SET imported_weak_point_id = ? WHERE id = ?",
+                (weak_point_id, lesson_id),
+            )
+
+    def import_lesson_as_weak_point(self, lesson_id: int, subject: str) -> int:
+        lesson = self.get_course_lesson(lesson_id)
+        if lesson.get("imported_weak_point_id"):
+            return int(lesson["imported_weak_point_id"])
+        knowledge_points = lesson.get("knowledge_points") or [lesson["title"]]
+        mistake_risks = lesson.get("mistake_risks") or ["资料生成待训练"]
+        weak_point_id = self.create_weak_point(
+            {
+                "subject": subject,
+                "question_type": "简答",
+                "knowledge_point": knowledge_points[0],
+                "mistake_reason": mistake_risks[0],
+                "mastery_level": "陌生",
+                "image_path": "",
+                "question_text": "",
+                "reference_answer": lesson.get("objective", ""),
+                "notes": f"课程导入：{lesson['title']}\n复习计划：{lesson.get('review_plan', '')}",
+            }
+        )
+        self.mark_lesson_imported(lesson_id, weak_point_id)
+        return weak_point_id
 
     @staticmethod
     def _now() -> str:
