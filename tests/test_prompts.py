@@ -77,3 +77,34 @@ def test_build_training_prompt_uses_override_body(storage):
 
     assert "请先问本人可归责性是什么。" in prompt
     assert template["body"] not in prompt
+
+
+def test_build_training_prompt_includes_source_context(storage):
+    weak_point = storage.get_weak_point(
+        storage.create_weak_point(
+            {
+                "subject": "刑法",
+                "question_type": "简答",
+                "knowledge_point": "共同犯罪",
+                "mistake_reason": "要件遗漏",
+                "mastery_level": "模糊",
+                "image_path": "",
+                "question_text": "",
+                "reference_answer": "",
+                "notes": "",
+            }
+        )
+    )
+    template = storage.list_templates()[0]
+
+    prompt = build_training_prompt(
+        weak_point=weak_point,
+        template=template,
+        student_goal="基于讲义追问",
+        recent_weaknesses=[],
+        prompt_override=None,
+        source_context="来源：刑法讲义\n共同犯罪要求二人以上共同故意。",
+    )
+
+    assert "【资料原文片段】" in prompt
+    assert "共同犯罪要求二人以上共同故意" in prompt

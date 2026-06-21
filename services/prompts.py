@@ -31,6 +31,7 @@ def build_training_prompt(
     student_goal: str,
     recent_weaknesses: list[str],
     prompt_override: str | None,
+    source_context: str = "",
 ) -> str:
     values = {
         "subject": weak_point.get("subject", ""),
@@ -46,20 +47,29 @@ def build_training_prompt(
     }
     body = prompt_override if prompt_override is not None else template.get("body", "")
     rendered_body = render_template(body, values)
-    return "\n\n".join(
+    sections = [
+        SYSTEM_RULES,
+        "【模板默认目标】\n" + template.get("default_goal", ""),
+        "【本次训练目标】\n" + (student_goal or template.get("default_goal", "")),
+        "【结束条件】\n" + template.get("end_condition", ""),
+        "【薄弱点信息】\n"
+        + f"科目：{values['subject']}\n"
+        + f"题型：{values['question_type']}\n"
+        + f"考点：{values['knowledge_point']}\n"
+        + f"错因：{values['mistake_reason']}\n"
+        + f"掌握度：{values['mastery_level']}\n"
+        + f"近期薄弱点：{render_template('{recent_weaknesses}', values)}",
+    ]
+    if source_context.strip():
+        sections.append(
+            "【资料原文片段】\n"
+            + source_context.strip()
+            + "\n\n请优先基于这些资料片段追问；资料不足时明确说明资料不足。"
+        )
+    sections.extend(
         [
-            SYSTEM_RULES,
-            "【模板默认目标】\n" + template.get("default_goal", ""),
-            "【本次训练目标】\n" + (student_goal or template.get("default_goal", "")),
-            "【结束条件】\n" + template.get("end_condition", ""),
-            "【薄弱点信息】\n"
-            + f"科目：{values['subject']}\n"
-            + f"题型：{values['question_type']}\n"
-            + f"考点：{values['knowledge_point']}\n"
-            + f"错因：{values['mistake_reason']}\n"
-            + f"掌握度：{values['mastery_level']}\n"
-            + f"近期薄弱点：{render_template('{recent_weaknesses}', values)}",
             "【追问模板】\n" + rendered_body,
             "请先提出第一个问题。问题必须具体、短小，并且只包含一个问点。",
         ]
     )
+    return "\n\n".join(sections)
