@@ -242,6 +242,20 @@ class Storage:
             )
             return template_id
 
+    def copy_template(self, template_id: int, new_name: str) -> int:
+        template = self.get_template(template_id)
+        return self.create_template(
+            {
+                "name": new_name,
+                "subject_scope": template["subject_scope"],
+                "question_type_scope": template["question_type_scope"],
+                "body": template["body"],
+                "default_goal": template["default_goal"],
+                "end_condition": template["end_condition"],
+                "is_active": True,
+            }
+        )
+
     def update_template(self, template_id: int, payload: dict[str, Any]) -> int:
         current = self.get_template(template_id)
         new_version = int(current["current_version"]) + 1

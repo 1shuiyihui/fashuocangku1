@@ -101,3 +101,14 @@ def test_training_session_messages_and_finish(storage):
     assert session["mastery_after"] == "基本会"
     assert len(messages) == 2
     assert messages[0]["role"] == "assistant"
+
+
+def test_copy_template_creates_independent_template(storage):
+    template = storage.list_templates()[0]
+
+    copied_id = storage.copy_template(template["id"], template["name"] + " 副本")
+    copied = storage.get_template(copied_id)
+
+    assert copied["name"].endswith("副本")
+    assert copied["body"] == template["body"]
+    assert copied["id"] != template["id"]
