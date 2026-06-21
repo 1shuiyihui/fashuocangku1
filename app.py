@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from sqlite3 import IntegrityError
 
 import pandas as pd
@@ -7,7 +8,10 @@ import streamlit as st
 
 from services.ai_client import AIClient, AIConfigurationError
 from services.analysis import build_review_report, compute_weak_point_stats
+from services.course_generator import CourseGenerationError, generate_course, normalize_lessons
+from services.document_processor import OCRUnavailableError, UnsupportedDocumentError, process_document_file
 from services.prompts import build_training_prompt
+from services.rag import format_rag_context, search_chunks
 from services.storage import Storage
 
 
@@ -15,7 +19,7 @@ SUBJECTS = ["刑法", "民法", "法理", "宪法", "法制史"]
 QUESTION_TYPES = ["单选", "多选", "简答", "论述", "案例分析"]
 MISTAKE_REASONS = ["概念混淆", "要件遗漏", "法条不熟", "案例事实误判", "记忆不牢", "表达不规范"]
 MASTERY_LEVELS = ["陌生", "模糊", "基本会", "熟练"]
-PAGES = ["今日学习", "错题/薄弱点录入", "苏格拉底训练", "模板管理", "薄弱点分析", "周度/月度复盘"]
+PAGES = ["今日学习", "错题/薄弱点录入", "苏格拉底训练", "资料知识库", "模板管理", "薄弱点分析", "周度/月度复盘"]
 BEGINNER_MODE_DEFAULT = True
 
 
@@ -86,6 +90,8 @@ def main() -> None:
         page_entry(store)
     elif page == "苏格拉底训练":
         page_training(store)
+    elif page == "资料知识库":
+        page_knowledge_base(store)
     elif page == "模板管理":
         page_templates(store)
     elif page == "薄弱点分析":
@@ -244,12 +250,22 @@ def page_training(store: Storage) -> None:
         save_as = ""
         st.caption("当前使用内置模板；需要改追问方式时再勾选上面的高级编辑。")
     recent_weaknesses = [row["knowledge_point"] for row in weak_points[:5]]
+    rag_results = search_chunks(
+        f"{weak_point['knowledge_point']} {weak_point.get('question_text', '')}",
+        store.list_document_chunks(),
+        top_k=4,
+    )
+    source_context = format_rag_context(rag_results)
+    if source_context:
+        with st.expander("本次训练会参考的资料片段"):
+            st.text(source_context)
     prompt_snapshot = build_training_prompt(
         weak_point=weak_point,
         template=template,
         student_goal=student_goal,
         recent_weaknesses=recent_weaknesses,
         prompt_override=prompt_override,
+        source_context=source_context,
     )
 
     with st.expander("预览本次完整提示词"):
@@ -338,6 +354,166 @@ def page_training(store: Storage) -> None:
         )
         st.session_state["active_session_id"] = None
         st.success("训练已结束并保存。")
+
+
+def page_knowledge_base(store: Storage) -> None:
+    st.title("资料知识库")
+    st.caption("上传讲义、真题解析或笔记后，系统会本地抽取文本、建立检索索引，并可用大模型生成后续课程。")
+
+    documents = store.list_documents()
+    chunks = store.list_document_chunks()
+    courses = store.list_courses()
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("资料", len(documents))
+    col2.metric("文本片段", len(chunks))
+    col3.metric("生成课程", len(courses))
+
+    st.subheader("1. 上传并处理资料")
+    with st.form("document_upload_form", clear_on_submit=True):
+        uploaded_file = st.file_uploader(
+            "上传 PDF、图片、TXT 或 Markdown",
+            type=["pdf", "png", "jpg", "jpeg", "webp", "txt", "md", "markdown"],
+            help="PDF 会优先直接抽文字；图片会尝试用本地 Tesseract OCR。",
+        )
+        submitted = st.form_submit_button("上传并建立索引")
+
+    if submitted:
+        if uploaded_file is None:
+            st.error("请先选择一个文件。")
+        else:
+            path = store.save_document_upload(uploaded_file)
+            document_id = store.create_document(
+                {
+                    "filename": uploaded_file.name,
+                    "file_type": "." + uploaded_file.name.split(".")[-1].lower(),
+                    "file_path": path,
+                    "status": "uploaded",
+                }
+            )
+            try:
+                text, text_chunks, status = process_document_file(path)
+                store.update_document_processing(document_id, text, status)
+                store.replace_document_chunks(
+                    document_id,
+                    [
+                        {
+                            "content": chunk,
+                            "source_label": f"{uploaded_file.name}#{index}",
+                        }
+                        for index, chunk in enumerate(text_chunks, start=1)
+                    ],
+                )
+                if text_chunks:
+                    st.success(f"已处理 {uploaded_file.name}，生成 {len(text_chunks)} 个检索片段。")
+                else:
+                    st.warning("文件已保存，但没有抽取到有效文本。扫描版 PDF 可以先转成图片再上传 OCR。")
+            except OCRUnavailableError as exc:
+                store.update_document_processing(document_id, "", "error", str(exc))
+                st.error(str(exc))
+            except UnsupportedDocumentError as exc:
+                store.update_document_processing(document_id, "", "error", str(exc))
+                st.error(str(exc))
+            except Exception as exc:
+                store.update_document_processing(document_id, "", "error", str(exc))
+                st.error(f"处理失败：{exc}")
+
+    documents = store.list_documents()
+    chunks = store.list_document_chunks()
+    if documents:
+        with st.expander("已上传资料", expanded=False):
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "id": row["id"],
+                            "filename": row["filename"],
+                            "status": row["status"],
+                            "error": row["error_message"],
+                            "created_at": row["created_at"],
+                        }
+                        for row in documents
+                    ]
+                ),
+                use_container_width=True,
+            )
+
+    st.subheader("2. 检索资料片段")
+    query = st.text_input("输入要查的考点或问题", placeholder="例如：共同犯罪成立条件")
+    if st.button("检索资料"):
+        results = search_chunks(query, chunks, top_k=5)
+        store.create_rag_query(query, [int(result["id"]) for result in results])
+        if results:
+            st.write("命中的资料片段：")
+            for result in results:
+                st.markdown(f"**{result['source_label']}** ｜相关度 {result['score']:.3f}")
+                st.write(result["content"])
+        else:
+            st.info("没有检索到资料片段。请先上传资料，或换一个更具体的考点。")
+
+    st.subheader("3. 生成课程并导入训练点")
+    ready_documents = [row for row in documents if row["status"] == "ready"]
+    if not ready_documents:
+        st.info("先上传并成功处理一份资料后，再生成课程。")
+    else:
+        selected_document = st.selectbox(
+            "选择课程来源资料",
+            ready_documents,
+            format_func=lambda row: f"#{row['id']} {row['filename']}",
+        )
+        course_goal = st.text_input("课程目标", value="围绕这份资料生成法硕考前苏格拉底训练课程")
+        days = st.slider("复习周期（天）", min_value=3, max_value=30, value=7)
+        document_chunks = store.list_document_chunks(selected_document["id"])
+        source_results = search_chunks(course_goal, document_chunks, top_k=8) or document_chunks[:8]
+        source_context = format_rag_context(source_results, max_chars=5000)
+
+        with st.expander("生成课程将参考的资料片段"):
+            st.text(source_context or "暂无资料片段")
+
+        if st.button("调用大模型生成课程"):
+            if not source_context:
+                st.error("该资料没有可用文本片段，无法生成课程。")
+            else:
+                try:
+                    course = generate_course(get_ai_client(), source_context, course_goal, days)
+                    lessons = normalize_lessons(course)
+                    course_id = store.create_course(
+                        title=course["title"],
+                        source_document_id=selected_document["id"],
+                        raw_json=json.dumps(course, ensure_ascii=False),
+                        lessons=lessons,
+                    )
+                    st.success(f"已生成课程 #{course_id}：{course['title']}")
+                except AIConfigurationError as exc:
+                    st.warning(str(exc))
+                except CourseGenerationError as exc:
+                    st.error(str(exc))
+                except Exception as exc:
+                    st.error(f"生成失败：{exc}")
+
+    courses = store.list_courses()
+    if courses:
+        st.subheader("已生成课程")
+        selected_course = st.selectbox(
+            "选择课程",
+            courses,
+            format_func=lambda row: f"#{row['id']} {row['title']}",
+        )
+        lessons = store.list_course_lessons(selected_course["id"])
+        for lesson in lessons:
+            with st.expander(f"第 {lesson['lesson_index']} 课：{lesson['title']}", expanded=False):
+                st.write(f"目标：{lesson['objective']}")
+                st.write("考点：" + "、".join(lesson["knowledge_points"]))
+                st.write("易错点：" + "、".join(lesson["mistake_risks"]))
+                st.write(f"推荐模板：{lesson['recommended_template']}")
+                st.write(f"复习计划：{lesson['review_plan']}")
+                if lesson["imported_weak_point_id"]:
+                    st.success(f"已导入为薄弱点 #{lesson['imported_weak_point_id']}")
+                else:
+                    subject = st.selectbox("导入科目", SUBJECTS, key=f"lesson_subject_{lesson['id']}")
+                    if st.button("导入为苏格拉底训练点", key=f"import_lesson_{lesson['id']}"):
+                        weak_point_id = store.import_lesson_as_weak_point(lesson["id"], subject)
+                        st.success(f"已导入为薄弱点 #{weak_point_id}")
 
 
 def page_templates(store: Storage) -> None:
