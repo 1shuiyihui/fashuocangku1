@@ -56,11 +56,11 @@ def test_beginner_mode_hides_advanced_prompt_editor_by_default():
     assert app.should_show_prompt_editor(beginner_mode=False, advanced_enabled=False) is True
 
 
-def test_v070_beginner_guide_and_course_import_labels():
+def test_v080_beginner_guide_and_course_import_labels():
     import app
     from services.versioning import APP_VERSION
 
-    assert APP_VERSION == "0.7.0"
+    assert APP_VERSION == "0.8.0"
     assert app.COURSE_GENERATION_SECTION_TITLE == "3. 生成可执行训练计划并导入训练点"
     assert app.LESSON_SUBJECT_LABEL == "训练点科目"
     assert app.IMPORT_LESSON_BUTTON_LABEL == "导入为训练点"
@@ -135,3 +135,29 @@ def test_persistence_config_reads_streamlit_secrets_shape():
     assert config.repo == "1shuiyihui/fashuocangku1"
     assert app.get_persistence_status_label(config) == "GitHub 云端快照"
     assert app.get_persistence_status_label() in {"GitHub 云端快照", "本地临时存储"}
+
+
+def test_v080_workflow_navigation_contract():
+    import app
+    from services.versioning import APP_VERSION
+
+    assert APP_VERSION == "0.8.0"
+    assert app.FOCUS_WEAK_POINT_KEY == "focus_weak_point_id"
+    assert app.REVIEW_FOCUS_KEY == "review_focus_keyword"
+    assert app.WORKFLOW_LOOP_STEPS == [
+        "录入训练点",
+        "苏格拉底训练",
+        "薄弱点分析",
+        "周度/月度复盘",
+        "下一轮训练",
+    ]
+
+
+def test_get_focused_weak_point_index_falls_back_safely():
+    import app
+
+    rows = [{"id": 1}, {"id": 7}, {"id": 9}]
+
+    assert app.get_focused_weak_point_index(rows, 7) == 1
+    assert app.get_focused_weak_point_index(rows, 999) == 0
+    assert app.get_focused_weak_point_index([], 7) == 0

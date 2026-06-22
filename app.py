@@ -26,9 +26,14 @@ from services.prompts import build_training_prompt
 from services.rag import format_rag_context, search_chunks
 from services.storage import Storage
 from services.versioning import APP_VERSION, SUPPORTED_SCHEMA_VERSION
+from services.workflow import build_learning_loop_state
 
 
 DATA_ROOT = Path("data")
+FOCUS_WEAK_POINT_KEY = "focus_weak_point_id"
+REVIEW_FOCUS_KEY = "review_focus_keyword"
+ANALYSIS_SUBJECT_FILTER_KEY = "analysis_subject_filter"
+WORKFLOW_LOOP_STEPS = ["录入训练点", "苏格拉底训练", "薄弱点分析", "周度/月度复盘", "下一轮训练"]
 
 
 SUBJECTS = ["刑法", "民法", "法理", "宪法", "法制史"]
@@ -229,6 +234,115 @@ html, body, [data-testid="stAppViewContainer"] {
 .priority-row:last-child {
     border-bottom: 0;
 }
+.loop-steps {
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    margin: 8px 0 18px;
+}
+.loop-step {
+    background: #ffffff;
+    border: 1px solid #e5e7ef;
+    border-radius: 8px;
+    color: #374151;
+    font-size: 13px;
+    font-weight: 650;
+    padding: 12px 14px;
+}
+.loop-step-index {
+    color: #2563eb;
+    font-size: 12px;
+    margin-bottom: 4px;
+}
+.workflow-table {
+    background: #ffffff;
+    border: 1px solid #e5e7ef;
+    border-radius: 8px;
+    margin: 10px 0 18px;
+    overflow: hidden;
+}
+.workflow-row {
+    align-items: center;
+    border-bottom: 1px solid #eef0f5;
+    display: grid;
+    gap: 12px;
+    grid-template-columns: 0.75fr 0.75fr 1.35fr 2fr 0.8fr 0.9fr;
+    padding: 13px 16px;
+}
+.workflow-row:last-child {
+    border-bottom: 0;
+}
+.workflow-header {
+    background: #f8fafc;
+    color: #6b7280;
+    font-size: 12px;
+    font-weight: 700;
+}
+.workflow-main {
+    color: #111827;
+    font-weight: 700;
+}
+.workflow-muted {
+    color: #6b7280;
+    font-size: 13px;
+}
+.chip {
+    border-radius: 999px;
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 4px 9px;
+}
+.chip-blue {
+    background: #eaf2ff;
+    color: #1d4ed8;
+}
+.chip-green {
+    background: #eaf8f0;
+    color: #15803d;
+}
+.chip-amber {
+    background: #fff7ed;
+    color: #c2410c;
+}
+.loop-card-grid {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin: 8px 0 18px;
+}
+.loop-card {
+    background: #ffffff;
+    border: 1px solid #e5e7ef;
+    border-radius: 8px;
+    padding: 15px 16px;
+}
+.loop-card-title {
+    color: #111827;
+    font-size: 16px;
+    font-weight: 750;
+    margin-bottom: 6px;
+}
+.loop-card-meta {
+    color: #6b7280;
+    font-size: 13px;
+}
+.rank-row {
+    background: #ffffff;
+    border: 1px solid #e5e7ef;
+    border-radius: 8px;
+    margin: 8px 0;
+    padding: 13px 15px;
+}
+.rank-title {
+    color: #111827;
+    font-weight: 750;
+}
+.rank-meta {
+    color: #6b7280;
+    font-size: 13px;
+    margin-top: 4px;
+}
 div[data-testid="stMetric"] {
     background: #ffffff;
     border: 1px solid #e5e7ef;
@@ -273,6 +387,13 @@ div[data-testid="stExpander"] {
         justify-content: flex-start;
     }
     .workbench-grid {
+        grid-template-columns: 1fr;
+    }
+    .loop-steps,
+    .loop-card-grid {
+        grid-template-columns: 1fr;
+    }
+    .workflow-row {
         grid-template-columns: 1fr;
     }
 }
@@ -328,6 +449,39 @@ def get_page_group(page: str) -> str:
 
 def get_ai_status_label(config: dict[str, str]) -> str:
     return "AI 已配置" if config.get("api_key") else "AI 未配置"
+
+
+def get_focused_weak_point_index(rows: list[dict[str, object]], weak_point_id: object) -> int:
+    if not rows:
+        return 0
+    try:
+        target_id = int(weak_point_id)
+    except (TypeError, ValueError):
+        return 0
+    for index, row in enumerate(rows):
+        try:
+            if int(row.get("id", -1)) == target_id:
+                return index
+        except (TypeError, ValueError):
+            continue
+    return 0
+
+
+def route_to_page(page: str) -> None:
+    st.session_state["current_page"] = page
+    st.rerun()
+
+
+def route_to_training(weak_point_id: int) -> None:
+    st.session_state[FOCUS_WEAK_POINT_KEY] = weak_point_id
+    st.session_state["current_page"] = "苏格拉底训练"
+    st.rerun()
+
+
+def route_to_review(keyword: str) -> None:
+    st.session_state[REVIEW_FOCUS_KEY] = keyword
+    st.session_state["current_page"] = "周度/月度复盘"
+    st.rerun()
 
 
 def escape_html(value: object) -> str:
@@ -537,18 +691,37 @@ def page_today(store: Storage) -> None:
     render_beginner_guide()
     weak_points = store.list_weak_points()
     sessions = store.list_sessions()
-    stats = compute_weak_point_stats(weak_points, sessions)
+    state = build_learning_loop_state(weak_points, sessions)
 
-    render_workbench_metrics(stats)
+    render_learning_loop_steps()
+    render_workbench_metrics(
+        {
+            "total_weak_points": state["totals"]["weak_points"],
+            "total_sessions": state["totals"]["sessions"],
+            "finished_sessions": state["totals"]["finished_sessions"],
+        }
+    )
 
-    action = get_next_action(weak_points, sessions)
-    render_next_action_card(action)
+    next_action = state["next_action"]
+    st.markdown(
+        f"""
+<div class="next-action-card">
+  <div class="next-action-title">{escape_html(next_action["title"])}</div>
+  <div class="next-action-detail">{escape_html(next_action["detail"])}</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+    render_action_button(next_action, key="today_next_action")
 
-    st.subheader("建议优先处理")
-    if stats["low_mastery"]:
-        render_priority_list(stats["low_mastery"][:5])
+    st.subheader("今日优先队列")
+    render_workflow_worktable(state["recent_entries"], limit=5, key_prefix="today_recent")
+
+    st.subheader("下一轮训练重点")
+    if state["priority_queue"]:
+        render_priority_training_cards(state["priority_queue"][:3], key_prefix="today_priority")
     else:
-        st.info("先录入一个错题或薄弱点，再开始苏格拉底训练。")
+        st.info("暂无需要排队处理的训练点。")
 
 
 def render_workbench_metrics(stats: dict[str, object]) -> None:
@@ -592,6 +765,131 @@ def render_priority_list(rows: list[dict[str, object]]) -> None:
         for row in rows
     )
     st.markdown(f'<div class="priority-list">{items}</div>', unsafe_allow_html=True)
+
+
+def render_learning_loop_steps() -> None:
+    items = "".join(
+        f"""
+<div class="loop-step">
+  <div class="loop-step-index">Step {index}</div>
+  <div>{escape_html(step)}</div>
+</div>
+"""
+        for index, step in enumerate(WORKFLOW_LOOP_STEPS, start=1)
+    )
+    st.markdown(f'<div class="loop-steps">{items}</div>', unsafe_allow_html=True)
+
+
+def render_action_button(action: dict[str, object], key: str) -> None:
+    label = str(action.get("title", "继续"))
+    if st.button(label, key=key, type="primary"):
+        page = str(action.get("page", ""))
+        if page == "苏格拉底训练" and action.get("weak_point_id") is not None:
+            route_to_training(int(action["weak_point_id"]))
+        elif page == "周度/月度复盘":
+            route_to_review(str(action.get("review_focus", "")))
+        elif page:
+            route_to_page(page)
+
+
+def render_workflow_worktable(rows: list[dict[str, object]], limit: int, key_prefix: str) -> None:
+    if not rows:
+        st.info("当前没有训练点记录。先录入一个训练点后，这里会形成可执行队列。")
+        return
+    st.markdown(
+        """
+<div class="workflow-row workflow-header">
+  <div>科目</div><div>题型</div><div>考点</div><div>错因</div><div>掌握度</div><div>训练状态</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+    for row in rows[:limit]:
+        st.markdown(
+            f"""
+<div class="workflow-row">
+  <div><span class="chip chip-blue">{escape_html(row.get("科目", ""))}</span></div>
+  <div class="workflow-muted">{escape_html(row.get("题型", ""))}</div>
+  <div class="workflow-main">{escape_html(row.get("考点", ""))}</div>
+  <div class="workflow-muted">{escape_html(row.get("错因", ""))}</div>
+  <div><span class="chip chip-amber">{escape_html(row.get("掌握度", ""))}</span></div>
+  <div><span class="chip chip-green">{escape_html(row.get("训练状态", ""))}</span></div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+        if st.button(str(row.get("workflow_action", "开始训练")), key=f"{key_prefix}_train_{row['id']}"):
+            route_to_training(int(row["id"]))
+
+
+def render_subject_cards(cards: list[dict[str, object]]) -> None:
+    if not cards:
+        st.info("暂无科目分布。")
+        return
+    cols = st.columns(min(3, len(cards)))
+    for index, card in enumerate(cards):
+        with cols[index % len(cols)]:
+            st.markdown(
+                f"""
+<div class="loop-card">
+  <div class="loop-card-title">{escape_html(card["subject"])}</div>
+  <div class="loop-card-meta">训练点 {escape_html(card["count"])} 个｜低掌握 {escape_html(card["low_mastery_count"])} 个</div>
+</div>
+""",
+                unsafe_allow_html=True,
+            )
+            st.progress(float(card.get("completion_rate", 0)))
+            if st.button("查看该科目训练点", key=f"subject_filter_{card['subject']}"):
+                st.session_state[ANALYSIS_SUBJECT_FILTER_KEY] = card["subject"]
+                st.rerun()
+
+
+def render_knowledge_rankings(rows: list[dict[str, object]], key_prefix: str) -> None:
+    if not rows:
+        st.info("暂无考点排行。")
+        return
+    for index, row in enumerate(rows[:8], start=1):
+        st.markdown(
+            f"""
+<div class="rank-row">
+  <div class="rank-title">#{index} {escape_html(row["knowledge_point"])}</div>
+  <div class="rank-meta">{escape_html(row["subjects"])}｜出现 {escape_html(row["count"])} 次｜{escape_html(row["recommendation"])}</div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+        if st.button("复盘这个考点", key=f"{key_prefix}_review_{index}_{row['knowledge_point']}"):
+            route_to_review(str(row["knowledge_point"]))
+
+
+def render_priority_training_cards(rows: list[dict[str, object]], key_prefix: str) -> None:
+    for index, row in enumerate(rows, start=1):
+        st.markdown(
+            f"""
+<div class="rank-row">
+  <div class="rank-title">#{index} {escape_html(row["subject"])}｜{escape_html(row["knowledge_point"])}</div>
+  <div class="rank-meta">错因：{escape_html(row["mistake_reason"])}｜掌握度：{escape_html(row["mastery_level"])}｜状态：{escape_html(row["training_status"])}</div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+        if st.button(str(row.get("workflow_action", "开始训练")), key=f"{key_prefix}_train_{row['id']}"):
+            route_to_training(int(row["id"]))
+
+
+def render_mistake_reason_queue(rows: list[dict[str, object]]) -> None:
+    if not rows:
+        st.info("暂无错因队列。")
+        return
+    for row in rows[:6]:
+        st.markdown(
+            f"""
+<div class="priority-row">
+  {escape_html(row["mistake_reason"])}｜{escape_html(row["count"])} 次｜建议：{escape_html(row["workflow_action"])}
+</div>
+""",
+            unsafe_allow_html=True,
+        )
 
 
 def render_beginner_guide() -> None:
@@ -675,7 +973,8 @@ def page_entry(store: Storage) -> None:
     st.subheader("最近录入")
     recent = store.list_weak_points()[:10]
     if recent:
-        st.dataframe(pd.DataFrame(recent), use_container_width=True)
+        state = build_learning_loop_state(store.list_weak_points(), store.list_sessions())
+        render_workflow_worktable(state["recent_entries"], limit=10, key_prefix="entry_recent")
     else:
         st.caption("还没有录入记录。")
 
@@ -694,6 +993,7 @@ def page_training(store: Storage) -> None:
     weak_point = st.selectbox(
         "选择薄弱点",
         weak_points,
+        index=get_focused_weak_point_index(weak_points, st.session_state.get(FOCUS_WEAK_POINT_KEY)),
         format_func=lambda row: f"{row['subject']}｜{row['knowledge_point']}｜{row['mastery_level']}",
     )
     template = st.selectbox("选择追问模板", templates, format_func=lambda row: row["name"])
@@ -1051,25 +1351,85 @@ def page_templates(store: Storage) -> None:
 def page_analysis(store: Storage) -> None:
     weak_points = store.list_weak_points()
     sessions = store.list_sessions()
-    stats = compute_weak_point_stats(weak_points, sessions)
-
     if not weak_points:
         st.info("暂无薄弱点记录。")
         return
 
-    st.subheader("按科目")
-    st.dataframe(pd.DataFrame(stats["by_subject"]), use_container_width=True)
-    st.subheader("按考点")
-    st.dataframe(pd.DataFrame(stats["by_knowledge_point"]), use_container_width=True)
-    st.subheader("按错因")
-    st.dataframe(pd.DataFrame(stats["by_mistake_reason"]), use_container_width=True)
-    st.subheader("低掌握度优先清单")
-    st.dataframe(pd.DataFrame(stats["low_mastery"]), use_container_width=True)
+    state = build_learning_loop_state(weak_points, sessions)
+    st.caption("这里不再只是展示统计表，而是把薄弱点转成下一步训练、复盘和错因修复队列。")
+
+    st.subheader("科目概览")
+    render_subject_cards(state["subject_cards"])
+
+    subject_options = ["全部"] + [card["subject"] for card in state["subject_cards"]]
+    current_subject = st.session_state.get(ANALYSIS_SUBJECT_FILTER_KEY, "全部")
+    if current_subject not in subject_options:
+        current_subject = "全部"
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        subject_filter = st.selectbox(
+            "筛选科目",
+            subject_options,
+            index=subject_options.index(current_subject),
+        )
+    with col2:
+        mastery_filter = st.selectbox("筛选掌握度", ["全部"] + MASTERY_LEVELS)
+    st.session_state[ANALYSIS_SUBJECT_FILTER_KEY] = subject_filter
+
+    filtered_points = [
+        row
+        for row in weak_points
+        if (subject_filter == "全部" or row["subject"] == subject_filter)
+        and (mastery_filter == "全部" or row["mastery_level"] == mastery_filter)
+    ]
+    filtered_state = build_learning_loop_state(filtered_points, sessions)
+
+    st.subheader("训练点工作表")
+    render_workflow_worktable(filtered_state["recent_entries"], limit=12, key_prefix="analysis_recent")
+
+    left, right = st.columns([1.1, 1])
+    with left:
+        st.subheader("高频考点排行")
+        render_knowledge_rankings(filtered_state["knowledge_rankings"], key_prefix="analysis")
+    with right:
+        st.subheader("错因修复队列")
+        render_mistake_reason_queue(filtered_state["mistake_reason_queue"])
+
+    st.subheader("优先训练")
+    render_priority_training_cards(filtered_state["priority_queue"][:5], key_prefix="analysis_priority")
 
 
 def page_review(store: Storage) -> None:
     period = st.radio("复盘周期", ["本周", "本月"], horizontal=True)
-    report = build_review_report(period, store.list_weak_points(), store.list_sessions())
+    weak_points = store.list_weak_points()
+    sessions = store.list_sessions()
+    review_focus = st.session_state.get(REVIEW_FOCUS_KEY, "")
+    if review_focus:
+        st.info(f"当前复盘焦点：{review_focus}")
+        focused_points = [
+            row
+            for row in weak_points
+            if review_focus in row.get("knowledge_point", "")
+            or review_focus in row.get("mistake_reason", "")
+            or review_focus in row.get("subject", "")
+        ]
+        if focused_points:
+            focused_ids = {int(row["id"]) for row in focused_points}
+            weak_points = focused_points
+            sessions = [
+                row
+                for row in sessions
+                if row.get("weak_point_id") is not None and int(row["weak_point_id"]) in focused_ids
+            ]
+        if st.button("清除复盘焦点"):
+            st.session_state[REVIEW_FOCUS_KEY] = ""
+            st.rerun()
+
+    state = build_learning_loop_state(weak_points, sessions)
+    st.subheader("复盘前先看训练队列")
+    render_priority_training_cards(state["priority_queue"][:3], key_prefix="review_priority")
+
+    report = build_review_report(period, weak_points, sessions)
     st.markdown(report)
     st.download_button(
         "下载 Markdown",
