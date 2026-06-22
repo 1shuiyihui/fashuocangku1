@@ -199,3 +199,40 @@ python -m py_compile app.py services/storage.py services/prompts.py services/ana
 - 最近备份列表。
 - 数据完整性检查。
 - 迁移日志。
+
+## 12. Streamlit Cloud 和 GitHub 部署设置提醒
+
+后续每次做版本优化、部署更新或排查数据/API 配置问题时，必须提醒检查当前部署设置：
+
+- GitHub Token 使用 fine-grained personal access token。
+- Expiration 当前选择：`90 days (Sep 20, 2026)`。到期前需要重新生成并更新 Streamlit Secrets。
+- Repository access 当前选择：`Only select repositories`。
+- 已选择仓库：`1shuiyihui/fashuocangku1`。
+- Repository permissions 需要确认 `Contents` 为 `Read and write`。
+- Account permissions 不需要额外添加。
+- 不要把 GitHub Token 或 DeepSeek API Key 发到聊天窗口，只能粘贴到 Streamlit Cloud 的 Secrets。
+
+Streamlit Cloud 的 Secrets 至少应包含：
+
+```toml
+[ai]
+api_base = "https://api.deepseek.com"
+model = "deepseek-v4-pro"
+api_key = "..."
+
+[persistence]
+enabled = true
+provider = "github"
+repo = "1shuiyihui/fashuocangku1"
+branch = "cloud-data"
+source_branch = "codex/fashuo-socratic-local-tool"
+snapshot_path = "fashuo-cloud-snapshot.zip"
+github_token = "..."
+```
+
+部署或重启后，页面顶部状态应确认：
+
+- `AI 已配置`
+- `GitHub 云端快照`
+
+如果刷新后 API Key 消失、数据归零、或页面顶部仍显示 `AI 未配置` / `本地临时存储`，优先检查 Streamlit Cloud Secrets 是否保存成功、Token 是否过期、Token 是否选中了正确仓库和 `Contents: Read and write` 权限。
