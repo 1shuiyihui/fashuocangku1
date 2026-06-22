@@ -56,11 +56,11 @@ def test_beginner_mode_hides_advanced_prompt_editor_by_default():
     assert app.should_show_prompt_editor(beginner_mode=False, advanced_enabled=False) is True
 
 
-def test_v050_beginner_guide_and_course_import_labels():
+def test_v060_beginner_guide_and_course_import_labels():
     import app
     from services.versioning import APP_VERSION
 
-    assert APP_VERSION == "0.5.0"
+    assert APP_VERSION == "0.6.0"
     assert app.COURSE_GENERATION_SECTION_TITLE == "3. 生成可执行训练计划并导入训练点"
     assert app.LESSON_SUBJECT_LABEL == "训练点科目"
     assert app.IMPORT_LESSON_BUTTON_LABEL == "导入为训练点"
@@ -69,6 +69,29 @@ def test_v050_beginner_guide_and_course_import_labels():
         "进入苏格拉底训练，用追问暴露真实薄弱处。",
         "每周或每月查看复盘，按高频考点和错因安排下一轮训练。",
     ]
+
+
+def test_v060_feishu_style_navigation_groups_cover_all_pages():
+    import app
+
+    grouped_pages = [page for _, pages in app.NAV_GROUPS for page in pages]
+
+    assert grouped_pages == app.PAGES
+    assert app.get_page_group("今日学习") == "学习"
+    assert app.get_page_group("资料知识库") == "资料"
+    assert app.get_page_group("周度/月度复盘") == "分析"
+    assert app.get_page_group("系统与备份") == "系统"
+
+
+def test_v060_shell_style_and_status_helpers():
+    import app
+
+    assert "app-topbar" in app.APP_SHELL_STYLE
+    assert "workbench-card" in app.APP_SHELL_STYLE
+    assert '[data-testid="stSidebar"]' in app.APP_SHELL_STYLE
+    assert app.get_ai_status_label({"api_key": "secret"}) == "AI 已配置"
+    assert app.get_ai_status_label({"api_key": ""}) == "AI 未配置"
+    assert app.get_ai_status_label({}) == "AI 未配置"
 
 
 def test_default_ai_config_reads_streamlit_secrets_shape():

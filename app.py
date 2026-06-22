@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import json
 from sqlite3 import IntegrityError
 
@@ -23,6 +24,22 @@ QUESTION_TYPES = ["单选", "多选", "简答", "论述", "案例分析"]
 MISTAKE_REASONS = ["概念混淆", "要件遗漏", "法条不熟", "案例事实误判", "记忆不牢", "表达不规范"]
 MASTERY_LEVELS = ["陌生", "模糊", "基本会", "熟练"]
 PAGES = ["今日学习", "错题/薄弱点录入", "苏格拉底训练", "资料知识库", "模板管理", "薄弱点分析", "周度/月度复盘", "系统与备份"]
+NAV_GROUPS = [
+    ("学习", ["今日学习", "错题/薄弱点录入", "苏格拉底训练"]),
+    ("资料", ["资料知识库", "模板管理"]),
+    ("分析", ["薄弱点分析", "周度/月度复盘"]),
+    ("系统", ["系统与备份"]),
+]
+PAGE_SUBTITLES = {
+    "今日学习": "从今日任务、薄弱点和复盘建议开始。",
+    "错题/薄弱点录入": "快速记录实体书错题、薄弱考点和错因。",
+    "苏格拉底训练": "围绕一个训练点进行连续追问。",
+    "资料知识库": "上传资料、检索片段，并生成可执行训练计划。",
+    "模板管理": "维护不同题型和科目的追问模板。",
+    "薄弱点分析": "查看科目、考点和错因的高频分布。",
+    "周度/月度复盘": "生成阶段复盘和下一轮训练安排。",
+    "系统与备份": "检查版本、数据库状态和备份。",
+}
 BEGINNER_MODE_DEFAULT = True
 COURSE_GENERATION_SECTION_TITLE = "3. 生成可执行训练计划并导入训练点"
 LESSON_SUBJECT_LABEL = "训练点科目"
@@ -32,13 +49,193 @@ APP_GUIDE_STEPS = [
     "进入苏格拉底训练，用追问暴露真实薄弱处。",
     "每周或每月查看复盘，按高频考点和错因安排下一轮训练。",
 ]
-GUIDE_STYLE = """
+APP_SHELL_STYLE = """
 <style>
+html, body, [data-testid="stAppViewContainer"] {
+    background: #f5f7fb;
+}
+[data-testid="stSidebar"] {
+    background: #f7f8fb;
+    border-right: 1px solid #e5e7ef;
+}
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
+    color: #4b5563;
+}
+[data-testid="stSidebar"] .stButton > button {
+    background: #ffffff;
+    border: 1px solid #dfe3eb;
+    color: #374151;
+    justify-content: flex-start;
+}
+[data-testid="stSidebar"] .stButton > button p {
+    color: #374151;
+}
+[data-testid="stSidebar"] .stButton > button:hover {
+    background: #eef4ff;
+    border-color: #bfdbfe;
+    color: #1d4ed8;
+}
+[data-testid="stSidebar"] .stButton > button:hover p {
+    color: #1d4ed8;
+}
+[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: #ffffff;
+}
+[data-testid="stSidebar"] .stButton > button[kind="primary"] p {
+    color: #ffffff;
+}
+.block-container {
+    max-width: 1180px;
+    padding-top: 1.2rem;
+    padding-bottom: 3rem;
+}
+.sidebar-brand {
+    padding: 8px 2px 16px;
+}
+.sidebar-brand-title {
+    color: #111827;
+    font-size: 20px;
+    font-weight: 750;
+    line-height: 1.2;
+}
+.sidebar-brand-subtitle {
+    color: #6b7280;
+    font-size: 12px;
+    margin-top: 4px;
+}
+.sidebar-group-title {
+    color: #8a94a6;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .02em;
+    margin: 16px 0 6px;
+}
+.app-topbar {
+    align-items: center;
+    background: #ffffff;
+    border: 1px solid #e5e7ef;
+    border-radius: 8px;
+    display: flex;
+    justify-content: space-between;
+    margin: 0 0 18px;
+    padding: 18px 22px;
+}
+.app-topbar-meta {
+    color: #2563eb;
+    font-size: 13px;
+    font-weight: 650;
+    margin-bottom: 4px;
+}
+.app-topbar h1 {
+    color: #111827;
+    font-size: 28px;
+    letter-spacing: 0;
+    line-height: 1.18;
+    margin: 0;
+}
+.app-topbar p {
+    color: #6b7280;
+    font-size: 14px;
+    margin: 8px 0 0;
+}
+.app-topbar-status {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+}
+.status-pill {
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    border-radius: 999px;
+    color: #374151;
+    font-size: 12px;
+    font-weight: 650;
+    padding: 6px 10px;
+    white-space: nowrap;
+}
+.status-pill-primary {
+    background: #eaf2ff;
+    border-color: #bfdbfe;
+    color: #1d4ed8;
+}
+.workbench-grid {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin: 8px 0 18px;
+}
+.workbench-card {
+    background: #ffffff;
+    border: 1px solid #e5e7ef;
+    border-radius: 8px;
+    padding: 16px 18px;
+}
+.workbench-card-label {
+    color: #6b7280;
+    font-size: 13px;
+    margin-bottom: 8px;
+}
+.workbench-card-value {
+    color: #111827;
+    font-size: 30px;
+    font-weight: 760;
+    line-height: 1;
+}
+.next-action-card {
+    background: #ffffff;
+    border: 1px solid #dbeafe;
+    border-left: 4px solid #2563eb;
+    border-radius: 8px;
+    margin: 10px 0 18px;
+    padding: 16px 18px;
+}
+.next-action-title {
+    color: #111827;
+    font-size: 16px;
+    font-weight: 750;
+    margin-bottom: 6px;
+}
+.next-action-detail {
+    color: #4b5563;
+    font-size: 14px;
+}
+.priority-list {
+    background: #ffffff;
+    border: 1px solid #e5e7ef;
+    border-radius: 8px;
+    padding: 6px 16px;
+}
+.priority-row {
+    border-bottom: 1px solid #eef0f5;
+    color: #374151;
+    padding: 11px 0;
+}
+.priority-row:last-child {
+    border-bottom: 0;
+}
+div[data-testid="stMetric"] {
+    background: #ffffff;
+    border: 1px solid #e5e7ef;
+    border-radius: 8px;
+    padding: 14px 16px;
+}
+div[data-testid="stExpander"] {
+    background: #ffffff;
+    border-radius: 8px;
+}
+.stButton > button,
+.stDownloadButton > button {
+    border-radius: 8px;
+}
 .fashuo-guide {
     animation: fashuoGuideIn 420ms ease-out;
     border: 1px solid #d7e8ff;
     border-radius: 8px;
-    background: #f3f8ff;
+    background: #ffffff;
     padding: 16px 18px;
     margin: 8px 0 18px;
 }
@@ -53,6 +250,19 @@ GUIDE_STYLE = """
 @keyframes fashuoGuideIn {
     from { opacity: 0; transform: translateY(-8px); }
     to { opacity: 1; transform: translateY(0); }
+}
+@media (max-width: 900px) {
+    .app-topbar {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 14px;
+    }
+    .app-topbar-status {
+        justify-content: flex-start;
+    }
+    .workbench-grid {
+        grid-template-columns: 1fr;
+    }
 }
 </style>
 """
@@ -95,6 +305,21 @@ def get_next_action(
 
 def should_show_prompt_editor(beginner_mode: bool, advanced_enabled: bool) -> bool:
     return advanced_enabled or not beginner_mode
+
+
+def get_page_group(page: str) -> str:
+    for group_name, pages in NAV_GROUPS:
+        if page in pages:
+            return group_name
+    return NAV_GROUPS[0][0]
+
+
+def get_ai_status_label(config: dict[str, str]) -> str:
+    return "AI 已配置" if config.get("api_key") else "AI 未配置"
+
+
+def escape_html(value: object) -> str:
+    return html.escape(str(value), quote=True)
 
 
 @st.cache_resource
@@ -156,15 +381,15 @@ def _mapping_get(mapping: object, key: str, default: object = "") -> object:
 
 
 def render_global_style() -> None:
-    st.markdown(GUIDE_STYLE, unsafe_allow_html=True)
+    st.markdown(APP_SHELL_STYLE, unsafe_allow_html=True)
 
 
 def main() -> None:
     st.set_page_config(page_title="法硕苏格拉底学习器", layout="wide")
     render_global_style()
     store = get_storage()
-    render_sidebar()
-    page = st.sidebar.radio("页面", PAGES)
+    page = render_sidebar()
+    render_workspace_header(page)
 
     if page == "今日学习":
         page_today(store)
@@ -184,8 +409,17 @@ def main() -> None:
         page_system_backup(store)
 
 
-def render_sidebar() -> None:
+def render_sidebar() -> str:
     ai_defaults = get_default_ai_config()
+    st.sidebar.markdown(
+        f"""
+<div class="sidebar-brand">
+  <div class="sidebar-brand-title">法硕知识助手</div>
+  <div class="sidebar-brand-subtitle">Socratic workbench · v{APP_VERSION}</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
     st.session_state["beginner_mode"] = st.sidebar.checkbox(
         "新手模式",
         value=st.session_state.get("beginner_mode", BEGINNER_MODE_DEFAULT),
@@ -209,32 +443,110 @@ def render_sidebar() -> None:
             value=st.session_state.get("api_key", ai_defaults["api_key"]),
             type="password",
         )
+    current_page = st.session_state.get("current_page", PAGES[0])
+    if current_page not in PAGES:
+        current_page = PAGES[0]
+    st.sidebar.markdown("页面")
+    for group_name, pages in NAV_GROUPS:
+        st.sidebar.markdown(f'<div class="sidebar-group-title">{group_name}</div>', unsafe_allow_html=True)
+        for nav_page in pages:
+            button_type = "primary" if nav_page == current_page else "secondary"
+            if st.sidebar.button(
+                nav_page,
+                key=f"nav_{nav_page}",
+                type=button_type,
+                use_container_width=True,
+            ):
+                current_page = nav_page
+                st.session_state["current_page"] = nav_page
+                st.rerun()
+    return current_page
+
+
+def render_workspace_header(page: str) -> None:
+    defaults = get_default_ai_config()
+    api_key = st.session_state.get("api_key", defaults["api_key"])
+    ai_status = get_ai_status_label({"api_key": str(api_key or "")})
+    group_name = get_page_group(page)
+    subtitle = PAGE_SUBTITLES.get(page, "")
+    status_class = "status-pill status-pill-primary" if ai_status == "AI 已配置" else "status-pill"
+    st.markdown(
+        f"""
+<div class="app-topbar">
+  <div>
+    <div class="app-topbar-meta">{escape_html(group_name)}</div>
+    <h1>{escape_html(page)}</h1>
+    <p>{escape_html(subtitle)}</p>
+  </div>
+  <div class="app-topbar-status">
+    <span class="status-pill">v{escape_html(APP_VERSION)}</span>
+    <span class="{status_class}">{escape_html(ai_status)}</span>
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
 
 def page_today(store: Storage) -> None:
-    st.title("今日学习")
     render_beginner_guide()
     weak_points = store.list_weak_points()
     sessions = store.list_sessions()
     stats = compute_weak_point_stats(weak_points, sessions)
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("薄弱点", stats["total_weak_points"])
-    col2.metric("训练次数", stats["total_sessions"])
-    col3.metric("完成训练", stats["finished_sessions"])
+    render_workbench_metrics(stats)
 
     action = get_next_action(weak_points, sessions)
-    st.info(f"{action['title']}：{action['detail']}")
-    st.caption(f"下一步：在左侧页面选择「{action['page']}」。")
+    render_next_action_card(action)
 
     st.subheader("建议优先处理")
     if stats["low_mastery"]:
-        for row in stats["low_mastery"][:5]:
-            st.write(
-                f"- {row['subject']}｜{row['knowledge_point']}｜{row['mistake_reason']}｜{row['mastery_level']}"
-            )
+        render_priority_list(stats["low_mastery"][:5])
     else:
         st.info("先录入一个错题或薄弱点，再开始苏格拉底训练。")
+
+
+def render_workbench_metrics(stats: dict[str, object]) -> None:
+    cards = [
+        ("薄弱点", stats["total_weak_points"]),
+        ("训练次数", stats["total_sessions"]),
+        ("完成训练", stats["finished_sessions"]),
+    ]
+    items = "".join(
+        f"""
+<div class="workbench-card">
+  <div class="workbench-card-label">{escape_html(label)}</div>
+  <div class="workbench-card-value">{escape_html(value)}</div>
+</div>
+"""
+        for label, value in cards
+    )
+    st.markdown(f'<div class="workbench-grid">{items}</div>', unsafe_allow_html=True)
+
+
+def render_next_action_card(action: dict[str, str]) -> None:
+    st.markdown(
+        f"""
+<div class="next-action-card">
+  <div class="next-action-title">{escape_html(action["title"])}</div>
+  <div class="next-action-detail">{escape_html(action["detail"])}</div>
+  <div class="next-action-detail">下一步：在左侧页面选择「{escape_html(action["page"])}」。</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def render_priority_list(rows: list[dict[str, object]]) -> None:
+    items = "".join(
+        f"""
+<div class="priority-row">
+  {escape_html(row["subject"])} ｜ {escape_html(row["knowledge_point"])} ｜ {escape_html(row["mistake_reason"])} ｜ {escape_html(row["mastery_level"])}
+</div>
+"""
+        for row in rows
+    )
+    st.markdown(f'<div class="priority-list">{items}</div>', unsafe_allow_html=True)
 
 
 def render_beginner_guide() -> None:
@@ -258,7 +570,6 @@ def render_beginner_guide() -> None:
 
 
 def page_entry(store: Storage) -> None:
-    st.title("错题/薄弱点录入")
     st.caption("第一次录入只填核心字段即可；照片、题干和参考答案都可以后补。")
     with st.form("weak_point_form", clear_on_submit=True):
         uploaded_file = st.file_uploader(
@@ -325,7 +636,6 @@ def page_entry(store: Storage) -> None:
 
 
 def page_training(store: Storage) -> None:
-    st.title("苏格拉底训练")
     beginner_mode = st.session_state.get("beginner_mode", BEGINNER_MODE_DEFAULT)
     weak_points = store.list_weak_points()
     templates = store.list_templates()
@@ -463,7 +773,6 @@ def page_training(store: Storage) -> None:
 
 
 def page_knowledge_base(store: Storage) -> None:
-    st.title("资料知识库")
     st.caption("上传讲义、真题解析或笔记后，系统会本地抽取文本、建立检索索引，并可用大模型生成后续课程。")
 
     documents = store.list_documents()
@@ -623,7 +932,6 @@ def page_knowledge_base(store: Storage) -> None:
 
 
 def page_templates(store: Storage) -> None:
-    st.title("模板管理")
     beginner_mode = st.session_state.get("beginner_mode", BEGINNER_MODE_DEFAULT)
     st.caption("不会改模板也可以跳过本页；内置模板已经可以直接用于训练。")
     templates = store.list_templates(active_only=False)
@@ -696,7 +1004,6 @@ def page_templates(store: Storage) -> None:
 
 
 def page_analysis(store: Storage) -> None:
-    st.title("薄弱点分析")
     weak_points = store.list_weak_points()
     sessions = store.list_sessions()
     stats = compute_weak_point_stats(weak_points, sessions)
@@ -716,7 +1023,6 @@ def page_analysis(store: Storage) -> None:
 
 
 def page_review(store: Storage) -> None:
-    st.title("周度/月度复盘")
     period = st.radio("复盘周期", ["本周", "本月"], horizontal=True)
     report = build_review_report(period, store.list_weak_points(), store.list_sessions())
     st.markdown(report)
@@ -729,7 +1035,6 @@ def page_review(store: Storage) -> None:
 
 
 def page_system_backup(store: Storage) -> None:
-    st.title("系统与备份")
     st.caption("这里用于检查系统版本、数据库版本、数据完整性，并手动创建完整备份。")
 
     schema_version = get_schema_version(store)
