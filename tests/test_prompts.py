@@ -108,3 +108,37 @@ def test_build_training_prompt_includes_source_context(storage):
 
     assert "【资料原文片段】" in prompt
     assert "共同犯罪要求二人以上共同故意" in prompt
+
+
+def test_build_training_prompt_includes_dialogue_round_policy(storage):
+    weak_point = storage.get_weak_point(
+        storage.create_weak_point(
+            {
+                "subject": "刑法",
+                "question_type": "案例分析",
+                "knowledge_point": "抢劫罪",
+                "mistake_reason": "要件遗漏",
+                "mastery_level": "陌生",
+                "image_path": "",
+                "question_text": "",
+                "reference_answer": "",
+                "notes": "",
+            }
+        )
+    )
+    template = storage.list_templates()[0]
+
+    prompt = build_training_prompt(
+        weak_point=weak_point,
+        template=template,
+        student_goal="至少三轮追问",
+        recent_weaknesses=[],
+        prompt_override=None,
+        min_dialogue_rounds=3,
+        max_dialogue_rounds=None,
+    )
+
+    assert "【对话轮次规则】" in prompt
+    assert "最少完成 3 轮" in prompt
+    assert "最大轮次：不限制" in prompt
+    assert "未达到最少轮次前，不得输出最终总结" in prompt

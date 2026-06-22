@@ -25,6 +25,26 @@ def render_template(body: str, values: dict[str, Any]) -> str:
     return VARIABLE_PATTERN.sub(replace, body)
 
 
+def normalize_dialogue_round_policy(
+    min_dialogue_rounds: int = 3,
+    max_dialogue_rounds: int | None = None,
+) -> tuple[int, int | None]:
+    try:
+        min_rounds = int(min_dialogue_rounds)
+    except (TypeError, ValueError):
+        min_rounds = 3
+    min_rounds = max(3, min_rounds)
+
+    if max_dialogue_rounds is None:
+        return min_rounds, None
+
+    try:
+        max_rounds = int(max_dialogue_rounds)
+    except (TypeError, ValueError):
+        return min_rounds, None
+    return min_rounds, max(min_rounds, max_rounds)
+
+
 def build_training_prompt(
     weak_point: dict[str, Any],
     template: dict[str, Any],
@@ -32,7 +52,14 @@ def build_training_prompt(
     recent_weaknesses: list[str],
     prompt_override: str | None,
     source_context: str = "",
+    min_dialogue_rounds: int = 3,
+    max_dialogue_rounds: int | None = None,
 ) -> str:
+    min_rounds, max_rounds = normalize_dialogue_round_policy(
+        min_dialogue_rounds,
+        max_dialogue_rounds,
+    )
+    max_rounds_text = "不限制" if max_rounds is None else f"最多 {max_rounds} 轮"
     values = {
         "subject": weak_point.get("subject", ""),
         "question_type": weak_point.get("question_type", ""),
@@ -52,6 +79,12 @@ def build_training_prompt(
         "【模板默认目标】\n" + template.get("default_goal", ""),
         "【本次训练目标】\n" + (student_goal or template.get("default_goal", "")),
         "【结束条件】\n" + template.get("end_condition", ""),
+        "【对话轮次规则】\n"
+        + "一轮对话=导师提出一个具体问题后，学生完成一次回答。\n"
+        + f"本次训练最少完成 {min_rounds} 轮学生回答。\n"
+        + f"最大轮次：{max_rounds_text}。\n"
+        + "未达到最少轮次前，不得输出最终总结，不得判断训练已经结束；每次回复结尾必须继续提出一个新的、具体的追问。\n"
+        + "达到最少轮次后，仍应根据学生掌握情况继续追问；只有学生已经满足结束条件时，才可以做阶段总结并提醒保存复盘。",
         "【薄弱点信息】\n"
         + f"科目：{values['subject']}\n"
         + f"题型：{values['question_type']}\n"

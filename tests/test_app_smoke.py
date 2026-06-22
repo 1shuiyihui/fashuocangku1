@@ -56,11 +56,11 @@ def test_beginner_mode_hides_advanced_prompt_editor_by_default():
     assert app.should_show_prompt_editor(beginner_mode=False, advanced_enabled=False) is True
 
 
-def test_v010_beginner_guide_and_course_import_labels():
+def test_v011_beginner_guide_and_course_import_labels():
     import app
     from services.versioning import APP_VERSION
 
-    assert APP_VERSION == "0.10.0"
+    assert APP_VERSION == "0.11.0"
     assert app.COURSE_GENERATION_SECTION_TITLE == "3. 生成可执行训练计划并导入训练点"
     assert app.LESSON_SUBJECT_LABEL == "训练点科目"
     assert app.IMPORT_LESSON_BUTTON_LABEL == "导入为训练点"
@@ -137,11 +137,11 @@ def test_persistence_config_reads_streamlit_secrets_shape():
     assert app.get_persistence_status_label() in {"GitHub 云端快照", "本地临时存储"}
 
 
-def test_v010_workflow_navigation_contract():
+def test_v011_workflow_navigation_contract():
     import app
     from services.versioning import APP_VERSION
 
-    assert APP_VERSION == "0.10.0"
+    assert APP_VERSION == "0.11.0"
     assert app.FOCUS_WEAK_POINT_KEY == "focus_weak_point_id"
     assert app.REVIEW_FOCUS_KEY == "review_focus_keyword"
     assert app.WORKFLOW_LOOP_STEPS == [
@@ -163,12 +163,12 @@ def test_get_focused_weak_point_index_falls_back_safely():
     assert app.get_focused_weak_point_index([], 7) == 0
 
 
-def test_v010_workspace_ui_contract():
+def test_v011_workspace_ui_contract():
     import app
     from services.versioning import APP_VERSION
 
-    assert APP_VERSION == "0.10.0"
-    assert app.get_app_version() == "0.10.0"
+    assert APP_VERSION == "0.11.0"
+    assert app.get_app_version() == "0.11.0"
     assert app.ENTRY_WORKFLOW_STEPS == ["上传或拍照", "结构化训练点", "AI 抽取与确认"]
     assert app.KNOWLEDGE_WORKFLOW_STEPS == [
         "上传并建立索引",
@@ -186,6 +186,8 @@ def test_v010_workspace_ui_contract():
         "导出复盘",
     ]
     assert app.REVIEW_DASHBOARD_SECTIONS == ["学习概况", "高频薄弱考点", "高频错因", "下一轮训练计划"]
+    assert app.DEFAULT_MIN_DIALOGUE_ROUNDS == 3
+    assert app.MAX_DIALOGUE_ROUND_OPTIONS[0] == "不限制"
 
 
 def test_v010_css_contains_workspace_layouts():
@@ -207,3 +209,22 @@ def test_v010_css_contains_workspace_layouts():
 
     for class_name in expected_classes:
         assert class_name in app.APP_SHELL_STYLE
+
+
+def test_v011_dialogue_round_helpers():
+    import app
+
+    assert app.normalize_min_dialogue_rounds(1) == 3
+    assert app.normalize_min_dialogue_rounds("5") == 5
+    assert app.normalize_max_dialogue_rounds("不限制", 3) is None
+    assert app.normalize_max_dialogue_rounds("4轮", 5) == 5
+    assert app.count_student_dialogue_rounds(
+        [
+            {"role": "assistant", "content": "问一"},
+            {"role": "user", "content": "答一"},
+            {"role": "assistant", "content": "问二"},
+            {"role": "user", "content": "答二"},
+        ]
+    ) == 2
+    assert app.can_finish_training(2, 3) is False
+    assert app.can_finish_training(3, 3) is True

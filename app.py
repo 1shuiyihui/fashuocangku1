@@ -70,6 +70,8 @@ APP_GUIDE_STEPS = [
 ENTRY_WORKFLOW_STEPS = ["上传或拍照", "结构化训练点", "AI 抽取与确认"]
 KNOWLEDGE_WORKFLOW_STEPS = ["上传并建立索引", "检索资料片段", "生成可执行训练计划", "导入为训练点"]
 TRAINING_PANEL_SECTIONS = ["模板提示", "参考资料片段", "掌握度评估", "本次训练记录"]
+DEFAULT_MIN_DIALOGUE_ROUNDS = 3
+MAX_DIALOGUE_ROUND_OPTIONS = ["不限制", "3轮", "4轮", "5轮", "6轮", "8轮", "10轮", "15轮", "20轮"]
 REVIEW_WORKFLOW_STEPS = ["选择周期", "查看训练队列", "定位高频问题", "安排下一轮训练", "导出复盘"]
 REVIEW_DASHBOARD_SECTIONS = ["学习概况", "高频薄弱考点", "高频错因", "下一轮训练计划"]
 SIDEBAR_STATUS_TITLE = "系统状态"
@@ -898,6 +900,42 @@ def get_app_version() -> str:
         return str(importlib.reload(versioning_module).APP_VERSION)
     except Exception:
         return APP_VERSION
+
+
+def normalize_min_dialogue_rounds(value: object) -> int:
+    try:
+        rounds = int(value)
+    except (TypeError, ValueError):
+        rounds = DEFAULT_MIN_DIALOGUE_ROUNDS
+    return max(DEFAULT_MIN_DIALOGUE_ROUNDS, rounds)
+
+
+def normalize_max_dialogue_rounds(value: object, min_rounds: int) -> int | None:
+    min_rounds = normalize_min_dialogue_rounds(min_rounds)
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text == "不限制":
+        return None
+    digits = "".join(char for char in text if char.isdigit())
+    if not digits:
+        return None
+    return max(min_rounds, int(digits))
+
+
+def count_student_dialogue_rounds(messages: list[dict[str, object]]) -> int:
+    return sum(1 for message in messages if message.get("role") == "user")
+
+
+def can_finish_training(completed_rounds: int, min_rounds: int) -> bool:
+    return completed_rounds >= normalize_min_dialogue_rounds(min_rounds)
+
+
+def format_round_policy_label(min_rounds: int, max_rounds: int | None) -> str:
+    min_rounds = normalize_min_dialogue_rounds(min_rounds)
+    if max_rounds is None:
+        return f"最少 {min_rounds} 轮｜不限制"
+    return f"最少 {min_rounds} 轮｜最多 {max(max_rounds, min_rounds)} 轮"
 
 
 @st.cache_resource
@@ -1759,6 +1797,24 @@ def page_training(store: Storage) -> None:
 """,
             unsafe_allow_html=True,
         )
+        min_dialogue_rounds = normalize_min_dialogue_rounds(
+            st.number_input(
+                "最少追问轮次",
+                min_value=DEFAULT_MIN_DIALOGUE_ROUNDS,
+                max_value=20,
+                value=DEFAULT_MIN_DIALOGUE_ROUNDS,
+                step=1,
+                help="未满这个轮次前，系统不会允许保存复盘。",
+            )
+        )
+        max_round_label = st.selectbox(
+            "最大追问轮次",
+            MAX_DIALOGUE_ROUND_OPTIONS,
+            index=0,
+            help="默认不限制；如设置上限，达到后模型会转入总结或巩固。",
+        )
+        max_dialogue_rounds = normalize_max_dialogue_rounds(max_round_label, min_dialogue_rounds)
+        st.caption(f"本次规则：{format_round_policy_label(min_dialogue_rounds, max_dialogue_rounds)}")
 
     advanced_enabled = st.checkbox(
         "我要临时修改本次提示词",
@@ -1786,6 +1842,8 @@ def page_training(store: Storage) -> None:
         recent_weaknesses=recent_weaknesses,
         prompt_override=prompt_override,
         source_context=source_context,
+        min_dialogue_rounds=min_dialogue_rounds,
+        max_dialogue_rounds=max_dialogue_rounds,
     )
 
     st.markdown(
@@ -1806,6 +1864,10 @@ def page_training(store: Storage) -> None:
   <div class="training-context-item">
     <div class="training-context-label">掌握度</div>
     <div class="training-context-value">{escape_html(weak_point["mastery_level"])}</div>
+  </div>
+  <div class="training-context-item">
+    <div class="training-context-label">轮次规则</div>
+    <div class="training-context-value">{escape_html(format_round_policy_label(min_dialogue_rounds, max_dialogue_rounds))}</div>
   </div>
 </div>
 """,
@@ -1849,6 +1911,8 @@ def page_training(store: Storage) -> None:
             mastery_before=weak_point["mastery_level"],
         )
         st.session_state["active_session_id"] = session_id
+        st.session_state[f"session_min_dialogue_rounds_{session_id}"] = min_dialogue_rounds
+        st.session_state[f"session_max_dialogue_rounds_{session_id}"] = max_dialogue_rounds
         try:
             reply = get_ai_client().chat([{"role": "system", "content": prompt_snapshot}])
             store.add_message(session_id, "assistant", reply)
@@ -1863,6 +1927,14 @@ def page_training(store: Storage) -> None:
         return
 
     messages = store.list_messages(session_id)
+    session_min_rounds = normalize_min_dialogue_rounds(
+        st.session_state.get(f"session_min_dialogue_rounds_{session_id}", DEFAULT_MIN_DIALOGUE_ROUNDS)
+    )
+    session_max_rounds = normalize_max_dialogue_rounds(
+        st.session_state.get(f"session_max_dialogue_rounds_{session_id}"),
+        session_min_rounds,
+    )
+    completed_rounds = count_student_dialogue_rounds(messages)
     chat_col, panel_col = st.columns([1.55, 1])
     with chat_col:
         st.subheader(f"当前训练 #{session_id}")
@@ -1879,6 +1951,10 @@ def page_training(store: Storage) -> None:
             st.caption(f"训练前：{weak_point['mastery_level']}｜错因：{weak_point['mistake_reason']}")
             st.markdown(f"**{TRAINING_PANEL_SECTIONS[3]}**")
             st.caption(f"已记录消息：{len(messages)} 条")
+            st.caption(
+                f"已完成轮次：{completed_rounds} / 至少 {session_min_rounds} 轮；"
+                + ("最大轮次：不限制" if session_max_rounds is None else f"最大轮次：{session_max_rounds} 轮")
+            )
             st.markdown(
                 """
 <div class="training-timeline">
@@ -1921,8 +1997,14 @@ def page_training(store: Storage) -> None:
             exposed_issues = st.text_area("暴露问题", height=80)
         with next_col:
             next_review_suggestion = st.text_area("下次复习建议", height=80)
+        st.caption(f"保存前至少完成 {session_min_rounds} 轮学生回答；当前已完成 {completed_rounds} 轮。")
         finish = st.form_submit_button("结束训练并保存复盘", type="primary")
     if finish:
+        messages = store.list_messages(session_id)
+        completed_rounds = count_student_dialogue_rounds(messages)
+        if not can_finish_training(completed_rounds, session_min_rounds):
+            st.error(f"当前只完成 {completed_rounds} 轮，至少完成 {session_min_rounds} 轮后再保存复盘。")
+            return
         store.finish_session(
             session_id,
             mastery_after,
