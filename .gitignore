@@ -7,4 +7,5 @@ venv/
 data/fashuo.db
 data/uploads/
 data/documents/
+backups/
 logs/
