@@ -4,8 +4,5 @@ __pycache__/
 .venv/
 venv/
 .env
-data/fashuo.db
-data/uploads/
-data/documents/
 backups/
 logs/
