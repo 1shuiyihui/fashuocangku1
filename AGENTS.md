@@ -25,7 +25,7 @@ Before changing code, dependencies, database schema, data directories, OCR/RAG b
 Every project update must finish with:
 
 - `python -m pytest -q`
-- `python -m py_compile app.py services/storage.py services/prompts.py services/analysis.py services/ai_client.py services/document_processor.py services/rag.py services/course_generator.py prompts/seed_templates.py`
+- `python -m py_compile app.py services/storage.py services/prompts.py services/analysis.py services/ai_client.py services/document_processor.py services/rag.py services/course_generator.py services/backup.py services/migrations.py services/versioning.py prompts/seed_templates.py`
 - HTTP check for `http://localhost:8501/` when the app is running
 - A short note stating whether user data was touched, migrated, backed up, or left untouched
 
@@ -34,4 +34,3 @@ Every project update must finish with:
 - Work on a `codex/` branch unless the user explicitly says otherwise.
 - Commit update-rule, migration, and implementation changes separately when practical.
 - Do not use destructive git commands such as `git reset --hard` or `git checkout --` to clean user changes.
-

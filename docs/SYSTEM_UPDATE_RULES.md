@@ -146,7 +146,7 @@ OCR、PDF 抽取、RAG 切块和课程生成中，任何文本写入 SQLite 前�
 
 ```powershell
 python -m pytest -q
-python -m py_compile app.py services/storage.py services/prompts.py services/analysis.py services/ai_client.py services/document_processor.py services/rag.py services/course_generator.py prompts/seed_templates.py
+python -m py_compile app.py services/storage.py services/prompts.py services/analysis.py services/ai_client.py services/document_processor.py services/rag.py services/course_generator.py services/backup.py services/migrations.py services/versioning.py prompts/seed_templates.py
 ```
 
 如果本地应用正在运行，还要检查：
@@ -182,7 +182,7 @@ python -m py_compile app.py services/storage.py services/prompts.py services/ana
 
 ## 11. 推荐的未来实现任务
 
-为了把守则变成自动机制，后续应实现：
+守则已开始自动化，当前已实现：
 
 - `services/versioning.py`
 - `services/backup.py`
@@ -199,4 +199,3 @@ python -m py_compile app.py services/storage.py services/prompts.py services/ana
 - 最近备份列表。
 - 数据完整性检查。
 - 迁移日志。
-
