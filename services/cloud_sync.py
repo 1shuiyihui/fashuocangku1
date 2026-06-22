@@ -22,7 +22,7 @@ DEFAULT_BRANCH = "cloud-data"
 DEFAULT_SOURCE_BRANCH = "codex/fashuo-socratic-local-tool"
 DEFAULT_SNAPSHOT_PATH = "fashuo-cloud-snapshot.zip"
 GITHUB_API_BASE = "https://api.github.com"
-SNAPSHOT_DIRS = ("uploads", "documents")
+SNAPSHOT_DIRS = ("uploads", "documents", "provenance")
 EXCLUDED_SUFFIXES = (".db-wal", ".db-shm")
 
 

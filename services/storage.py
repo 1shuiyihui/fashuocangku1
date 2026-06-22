@@ -25,6 +25,7 @@ class Storage:
         db_path: Path | str = "data/fashuo.db",
         uploads_dir: Path | str = "data/uploads",
         documents_dir: Path | str = "data/documents",
+        provenance_dir: Path | str = "data/provenance",
         max_upload_bytes: int = MAX_UPLOAD_BYTES,
         max_document_upload_bytes: int = MAX_DOCUMENT_UPLOAD_BYTES,
         after_write: Callable[[str], None] | None = None,
@@ -32,6 +33,7 @@ class Storage:
         self.db_path = Path(db_path)
         self.uploads_dir = Path(uploads_dir)
         self.documents_dir = Path(documents_dir)
+        self.provenance_dir = Path(provenance_dir)
         self.max_upload_bytes = max_upload_bytes
         self.max_document_upload_bytes = max_document_upload_bytes
         self.after_write = after_write
@@ -41,6 +43,7 @@ class Storage:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.uploads_dir.mkdir(parents=True, exist_ok=True)
         self.documents_dir.mkdir(parents=True, exist_ok=True)
+        self.provenance_dir.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self.db_path, timeout=SQLITE_BUSY_TIMEOUT_MS / 1000)
         conn.row_factory = sqlite3.Row
         changed = False
@@ -185,6 +188,31 @@ class Storage:
                     created_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS error_analyses (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    weak_point_id INTEGER NOT NULL,
+                    error_location TEXT NOT NULL,
+                    root_cause TEXT NOT NULL,
+                    evidence TEXT NOT NULL DEFAULT '',
+                    review_drill TEXT NOT NULL DEFAULT '',
+                    variant_drill TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(weak_point_id) REFERENCES weak_points(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS provenance_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    entity_type TEXT NOT NULL,
+                    entity_id INTEGER,
+                    event_type TEXT NOT NULL,
+                    input_path TEXT NOT NULL,
+                    output_path TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_weak_points_created_at
                     ON weak_points(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_weak_points_subject
@@ -201,6 +229,14 @@ class Storage:
                     ON document_chunks(document_id, chunk_index);
                 CREATE INDEX IF NOT EXISTS idx_course_lessons_course_id
                     ON course_lessons(course_id, lesson_index);
+                CREATE INDEX IF NOT EXISTS idx_error_analyses_weak_point_id
+                    ON error_analyses(weak_point_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_error_analyses_root_cause
+                    ON error_analyses(root_cause);
+                CREATE INDEX IF NOT EXISTS idx_provenance_events_entity
+                    ON provenance_events(entity_type, entity_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_provenance_events_type
+                    ON provenance_events(event_type, created_at DESC);
                 """
             )
 
@@ -408,6 +444,139 @@ class Storage:
             if row is None:
                 raise KeyError(f"weak point not found: {weak_point_id}")
             return self._dict(row)
+
+    def create_error_analysis(self, payload: dict[str, Any]) -> int:
+        now = self._now()
+        with self.connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO error_analyses
+                (weak_point_id, error_location, root_cause, evidence, review_drill, variant_drill, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    payload["weak_point_id"],
+                    payload["error_location"],
+                    payload["root_cause"],
+                    payload.get("evidence", ""),
+                    payload.get("review_drill", ""),
+                    payload.get("variant_drill", ""),
+                    payload.get("status", "draft"),
+                    now,
+                    now,
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def update_error_analysis(self, analysis_id: int, payload: dict[str, Any]) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE error_analyses
+                SET error_location = ?, root_cause = ?, evidence = ?, review_drill = ?,
+                    variant_drill = ?, status = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    payload["error_location"],
+                    payload["root_cause"],
+                    payload.get("evidence", ""),
+                    payload.get("review_drill", ""),
+                    payload.get("variant_drill", ""),
+                    payload.get("status", "draft"),
+                    self._now(),
+                    analysis_id,
+                ),
+            )
+
+    def get_latest_error_analysis(self, weak_point_id: int) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT ea.*, wp.subject, wp.question_type, wp.knowledge_point, wp.mistake_reason, wp.mastery_level
+                FROM error_analyses ea
+                JOIN weak_points wp ON wp.id = ea.weak_point_id
+                WHERE ea.weak_point_id = ?
+                ORDER BY ea.updated_at DESC, ea.id DESC
+                LIMIT 1
+                """,
+                (weak_point_id,),
+            ).fetchone()
+            return self._dict(row) if row is not None else None
+
+    def list_error_analyses(self, weak_point_id: int | None = None) -> list[dict[str, Any]]:
+        if weak_point_id is None:
+            query = """
+                SELECT ea.*, wp.subject, wp.question_type, wp.knowledge_point, wp.mistake_reason, wp.mastery_level
+                FROM error_analyses ea
+                JOIN weak_points wp ON wp.id = ea.weak_point_id
+                ORDER BY ea.updated_at DESC, ea.id DESC
+            """
+            params: tuple[Any, ...] = ()
+        else:
+            query = """
+                SELECT ea.*, wp.subject, wp.question_type, wp.knowledge_point, wp.mistake_reason, wp.mastery_level
+                FROM error_analyses ea
+                JOIN weak_points wp ON wp.id = ea.weak_point_id
+                WHERE ea.weak_point_id = ?
+                ORDER BY ea.updated_at DESC, ea.id DESC
+            """
+            params = (weak_point_id,)
+        with self.connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+            return [self._dict(row) for row in rows]
+
+    def create_provenance_event(self, payload: dict[str, Any]) -> int:
+        metadata = payload.get("metadata_json", payload.get("metadata", {}))
+        if not isinstance(metadata, str):
+            metadata = json.dumps(metadata, ensure_ascii=False)
+        with self.connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO provenance_events
+                (entity_type, entity_id, event_type, input_path, output_path, metadata_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    payload["entity_type"],
+                    payload.get("entity_id"),
+                    payload["event_type"],
+                    payload["input_path"],
+                    payload["output_path"],
+                    metadata,
+                    self._now(),
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def list_provenance_events(
+        self,
+        entity_type: str | None = None,
+        entity_id: int | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        query = "SELECT * FROM provenance_events"
+        clauses = []
+        params: list[Any] = []
+        if entity_type is not None:
+            clauses.append("entity_type = ?")
+            params.append(entity_type)
+        if entity_id is not None:
+            clauses.append("entity_id = ?")
+            params.append(entity_id)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY created_at DESC, id DESC LIMIT ?"
+        params.append(limit)
+        with self.connect() as conn:
+            rows = conn.execute(query, tuple(params)).fetchall()
+            events = [self._dict(row) for row in rows]
+        for event in events:
+            try:
+                event["metadata"] = json.loads(event.get("metadata_json") or "{}")
+            except json.JSONDecodeError:
+                event["metadata"] = {}
+        return events
 
     def list_templates(self, active_only: bool = True) -> list[dict[str, Any]]:
         query = "SELECT * FROM templates"

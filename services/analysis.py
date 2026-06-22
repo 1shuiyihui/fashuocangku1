@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
+from services.error_analysis import build_review_drill_pack
+
 
 MASTERY_RISK = {
     "陌生": 4,
@@ -48,6 +50,7 @@ def build_review_report(
     period_label: str,
     weak_points: list[dict[str, Any]],
     sessions: list[dict[str, Any]],
+    error_analyses: list[dict[str, Any]] | None = None,
 ) -> str:
     stats = compute_weak_point_stats(weak_points, sessions)
     top_points = stats["by_knowledge_point"][:5]
@@ -66,6 +69,19 @@ def build_review_report(
     lines.extend(_bullet_rows(top_points, "knowledge_point"))
     lines.extend(["", "## 高频错因"])
     lines.extend(_bullet_rows(top_reasons, "mistake_reason"))
+    if error_analyses:
+        lines.extend(["", "## 错因还原"])
+        for row in error_analyses[:8]:
+            lines.append(
+                f"- {row.get('knowledge_point', '')}｜{row.get('error_location', '')}｜{row.get('root_cause', '')}：{row.get('evidence', '')}"
+            )
+        lines.extend(["", "## 复盘练习与变式练习"])
+        for pack in build_review_drill_pack(error_analyses)[:5]:
+            lines.append(f"- {pack['root_cause']}（{pack['count']} 次）：{pack['focus_points']}")
+            for drill in pack["review_drills"][:2]:
+                lines.append(f"  - 复盘练习：{drill}")
+            for drill in pack["variant_drills"][:2]:
+                lines.append(f"  - 变式练习：{drill}")
     lines.extend(["", "## 建议优先训练"])
     if low_mastery:
         for row in low_mastery:

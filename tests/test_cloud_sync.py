@@ -78,10 +78,12 @@ def test_build_and_restore_snapshot_archive_round_trips_data(tmp_path: Path):
     source = tmp_path / "source"
     (source / "uploads").mkdir(parents=True)
     (source / "documents").mkdir()
+    (source / "provenance").mkdir()
     (source / "fashuo.db").write_bytes(b"sqlite-db")
     (source / "fashuo.db-wal").write_bytes(b"ignore-wal")
     (source / "uploads" / "question.png").write_bytes(b"image")
     (source / "documents" / "note.txt").write_text("共同犯罪", encoding="utf-8")
+    (source / "provenance" / "trace.md").write_text("错误还原", encoding="utf-8")
 
     archive = build_snapshot_archive(source, app_version="test")
     target = tmp_path / "target"
@@ -91,6 +93,7 @@ def test_build_and_restore_snapshot_archive_round_trips_data(tmp_path: Path):
     assert (target / "fashuo.db").read_bytes() == b"sqlite-db"
     assert (target / "uploads" / "question.png").read_bytes() == b"image"
     assert (target / "documents" / "note.txt").read_text(encoding="utf-8") == "共同犯罪"
+    assert (target / "provenance" / "trace.md").read_text(encoding="utf-8") == "错误还原"
     assert not (target / "fashuo.db-wal").exists()
 
 

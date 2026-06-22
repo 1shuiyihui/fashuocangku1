@@ -13,7 +13,7 @@ Before changing code, dependencies, database schema, data directories, OCR/RAG b
 
 ## Data Safety Rules
 
-- Treat `data/fashuo.db`, `data/uploads/`, and `data/documents/` as user data.
+- Treat `data/fashuo.db`, `data/uploads/`, `data/documents/`, and `data/provenance/` as user data.
 - Never delete, overwrite, move, or reset user data unless the user explicitly asks for it.
 - Before any data-affecting change, create a backup plan and document it in the update notes.
 - Schema changes must use versioned migrations. Do not silently rebuild tables in a way that can drop data.
@@ -34,6 +34,6 @@ Every project update must finish with:
 - Work on a `codex/` branch unless the user explicitly says otherwise.
 - Commit update-rule, migration, and implementation changes separately when practical.
 - Do not use destructive git commands such as `git reset --hard` or `git checkout --` to clean user changes.
-- For this private GitHub repository, `data/fashuo.db`, `data/uploads/`, and `data/documents/` may be versioned as the owner's approved full-project snapshot.
+- For this private GitHub repository, `data/fashuo.db`, `data/uploads/`, `data/documents/`, and `data/provenance/` may be versioned as the owner's approved full-project snapshot.
 - Never commit `.env`, API keys, access tokens, `backups/`, `logs/`, Python caches, or virtual environments.
 - If the repository will be made public, create a scrubbed branch or export package with sample data instead of real study data.

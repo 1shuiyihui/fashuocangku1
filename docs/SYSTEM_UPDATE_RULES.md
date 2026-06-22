@@ -24,6 +24,7 @@
 data/fashuo.db
 data/uploads/
 data/documents/
+data/provenance/
 ```
 
 后续推荐迁移到仓库外的数据根目录，例如：
@@ -34,6 +35,7 @@ C:\Users\yhshi16\Documents\ai网课_data\
     fashuo.db
     uploads\
     documents\
+    provenance\
   backups\
   exports\
 ```
@@ -78,6 +80,7 @@ backups/YYYY-MM-DD_HHMMSS_before_<update-name>/
   fashuo.db
   uploads/
   documents/
+  provenance/
   manifest.json
 ```
 
@@ -102,6 +105,8 @@ backups/YYYY-MM-DD_HHMMSS_before_<update-name>/
 - generated_courses
 - course_lessons
 - rag_queries
+- error_analyses
+- provenance_events
 
 ## 5. 更新前后必须做完整性检查
 
@@ -173,7 +178,7 @@ python -m py_compile app.py services/storage.py services/prompts.py services/ana
 ## 10. 禁止事项
 
 - 禁止为了修 bug 删除 `data/fashuo.db`。
-- 禁止清空 `data/uploads/` 或 `data/documents/`。
+- 禁止清空 `data/uploads/`、`data/documents/` 或 `data/provenance/`。
 - 禁止用新空数据库覆盖旧数据库。
 - 禁止没有备份就做 schema 变更。
 - 禁止没有验证就声称更新完成。

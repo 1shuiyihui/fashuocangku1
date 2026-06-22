@@ -67,3 +67,31 @@ def test_review_report_mentions_priorities_and_training_recommendations(storage)
     assert "共同犯罪" in report
     assert "要件遗漏" in report
     assert "建议优先训练" in report
+
+
+def test_review_report_includes_error_reconstruction_and_drills(storage):
+    _create_sample_weak_points(storage)
+    weak_point = storage.list_weak_points()[0]
+    storage.create_error_analysis(
+        {
+            "weak_point_id": weak_point["id"],
+            "error_location": "构成要件与采分表达",
+            "root_cause": "要件遗漏",
+            "evidence": "漏写共同故意和共同实行行为。",
+            "review_drill": "默写共同犯罪成立条件。",
+            "variant_drill": "把共同故意改成单方意思联络后判断。",
+            "status": "confirmed",
+        }
+    )
+
+    report = build_review_report(
+        period_label="本周",
+        weak_points=storage.list_weak_points(),
+        sessions=storage.list_sessions(),
+        error_analyses=storage.list_error_analyses(),
+    )
+
+    assert "## 错因还原" in report
+    assert "漏写共同故意" in report
+    assert "## 复盘练习与变式练习" in report
+    assert "默写共同犯罪成立条件" in report

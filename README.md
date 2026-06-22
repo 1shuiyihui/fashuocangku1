@@ -15,6 +15,7 @@
 - v0.9.0 起，左侧边栏、错题/薄弱点录入、苏格拉底训练、资料知识库和训练计划页面重构为工作台式 UI：上传/录入、追问训练、资料检索、计划生成和导入训练点都围绕同一学习闭环展示。
 - v0.10.0 起，周度/月度复盘重构为复盘驾驶舱：先看训练队列、学习概况、高频薄弱点和高频错因，再生成下一轮训练计划，Markdown 原文保留为折叠预览和下载。
 - v0.11.0 起，苏格拉底训练支持设置追问轮次：默认至少 3 轮，最大轮次默认不限制；未达到最少轮次前不能保存复盘，避免训练过早结束。
+- v0.12.0 起，新增错因还原和溯源闭环：录入、训练、资料处理、RAG 检索、课程生成和复盘报告都会保存输入/输出文件，薄弱点分析和周度/月度复盘会展示错误位置、根因证据、复盘练习和变式练习。
 
 ## 安装
 
@@ -89,7 +90,7 @@ winget install UB-Mannheim.TesseractOCR
 
 应用启动时会检查数据库版本。旧数据库会先自动备份，再执行迁移；如果发现数据库版本高于当前应用支持版本，系统会拒绝继续写入，避免旧代码破坏新数据。
 
-也可以在页面中手动点击 `立即创建备份`，备份会复制数据库、错题图片目录、资料目录和 manifest.json。
+也可以在页面中手动点击 `立即创建备份`，备份会复制数据库、错题图片目录、资料目录、溯源文件目录和 manifest.json。
 
 ## AI 配置
 
@@ -121,7 +122,7 @@ snapshot_path = "fashuo-cloud-snapshot.zip"
 github_token = "replace-with-github-token"
 ```
 
-开启后，应用启动时会先从 `cloud-data` 分支恢复 `data/fashuo.db`、`data/uploads/` 和 `data/documents/`，写入学习记录后会自动上传新的快照。`github_token` 只放在 Streamlit Secrets，不要提交到 GitHub。
+开启后，应用启动时会先从 `cloud-data` 分支恢复 `data/fashuo.db`、`data/uploads/`、`data/documents/` 和 `data/provenance/`，写入学习记录和溯源文件后会自动上传新的快照。`github_token` 只放在 Streamlit Secrets，不要提交到 GitHub。
 
 部署或重启后，页面顶部和左侧状态卡应显示：
 

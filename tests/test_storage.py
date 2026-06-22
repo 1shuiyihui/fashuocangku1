@@ -196,3 +196,64 @@ def test_lesson_import_keeps_executable_review_plan_in_notes(storage):
     assert imported["mistake_reason"] == "中止与未遂混淆"
     assert "预计用时：20 分钟" in imported["notes"]
     assert "复盘清单：能区分中止与未遂" in imported["notes"]
+
+
+def test_error_analysis_and_provenance_event_round_trip(storage):
+    weak_point_id = storage.create_weak_point(
+        {
+            "subject": "刑法",
+            "question_type": "案例分析",
+            "knowledge_point": "抢劫罪",
+            "mistake_reason": "要件遗漏",
+            "mastery_level": "陌生",
+            "image_path": "",
+            "question_text": "甲压制乙反抗后取走财物。",
+            "reference_answer": "抢劫罪要求压制反抗并劫取财物。",
+            "notes": "漏写压制反抗。",
+        }
+    )
+
+    analysis_id = storage.create_error_analysis(
+        {
+            "weak_point_id": weak_point_id,
+            "error_location": "构成要件与采分表达",
+            "root_cause": "要件遗漏",
+            "evidence": "漏写压制反抗。",
+            "review_drill": "默写抢劫罪四要件。",
+            "variant_drill": "把暴力手段换成胁迫后重新作答。",
+            "status": "draft",
+        }
+    )
+    storage.update_error_analysis(
+        analysis_id,
+        {
+            "error_location": "构成要件与采分表达",
+            "root_cause": "要件遗漏",
+            "evidence": "训练后确认遗漏压制反抗。",
+            "review_drill": "默写并口述抢劫罪成立条件。",
+            "variant_drill": "加入转化型抢劫情形重新判断。",
+            "status": "confirmed",
+        },
+    )
+
+    latest = storage.get_latest_error_analysis(weak_point_id)
+
+    assert latest["id"] == analysis_id
+    assert latest["status"] == "confirmed"
+    assert "训练后确认" in latest["evidence"]
+
+    event_id = storage.create_provenance_event(
+        {
+            "entity_type": "weak_point",
+            "entity_id": weak_point_id,
+            "event_type": "entry_error_analysis",
+            "input_path": "data/provenance/input.json",
+            "output_path": "data/provenance/output.md",
+            "metadata_json": '{"source":"unit-test"}',
+        }
+    )
+    events = storage.list_provenance_events(entity_type="weak_point", entity_id=weak_point_id)
+
+    assert events[0]["id"] == event_id
+    assert events[0]["event_type"] == "entry_error_analysis"
+    assert events[0]["metadata"]["source"] == "unit-test"

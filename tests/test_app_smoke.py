@@ -56,11 +56,11 @@ def test_beginner_mode_hides_advanced_prompt_editor_by_default():
     assert app.should_show_prompt_editor(beginner_mode=False, advanced_enabled=False) is True
 
 
-def test_v011_beginner_guide_and_course_import_labels():
+def test_v012_beginner_guide_and_course_import_labels():
     import app
     from services.versioning import APP_VERSION
 
-    assert APP_VERSION == "0.11.0"
+    assert APP_VERSION == "0.12.0"
     assert app.COURSE_GENERATION_SECTION_TITLE == "3. 生成可执行训练计划并导入训练点"
     assert app.LESSON_SUBJECT_LABEL == "训练点科目"
     assert app.IMPORT_LESSON_BUTTON_LABEL == "导入为训练点"
@@ -137,11 +137,11 @@ def test_persistence_config_reads_streamlit_secrets_shape():
     assert app.get_persistence_status_label() in {"GitHub 云端快照", "本地临时存储"}
 
 
-def test_v011_workflow_navigation_contract():
+def test_v012_workflow_navigation_contract():
     import app
     from services.versioning import APP_VERSION
 
-    assert APP_VERSION == "0.11.0"
+    assert APP_VERSION == "0.12.0"
     assert app.FOCUS_WEAK_POINT_KEY == "focus_weak_point_id"
     assert app.REVIEW_FOCUS_KEY == "review_focus_keyword"
     assert app.WORKFLOW_LOOP_STEPS == [
@@ -163,12 +163,12 @@ def test_get_focused_weak_point_index_falls_back_safely():
     assert app.get_focused_weak_point_index([], 7) == 0
 
 
-def test_v011_workspace_ui_contract():
+def test_v012_workspace_ui_contract():
     import app
     from services.versioning import APP_VERSION
 
-    assert APP_VERSION == "0.11.0"
-    assert app.get_app_version() == "0.11.0"
+    assert APP_VERSION == "0.12.0"
+    assert app.get_app_version() == "0.12.0"
     assert app.ENTRY_WORKFLOW_STEPS == ["上传或拍照", "结构化训练点", "AI 抽取与确认"]
     assert app.KNOWLEDGE_WORKFLOW_STEPS == [
         "上传并建立索引",
@@ -188,6 +188,7 @@ def test_v011_workspace_ui_contract():
     assert app.REVIEW_DASHBOARD_SECTIONS == ["学习概况", "高频薄弱考点", "高频错因", "下一轮训练计划"]
     assert app.DEFAULT_MIN_DIALOGUE_ROUNDS == 3
     assert app.MAX_DIALOGUE_ROUND_OPTIONS[0] == "不限制"
+    assert app.ERROR_ANALYSIS_SECTIONS == ["错误还原", "根因证据", "复盘练习", "变式练习", "溯源记录"]
 
 
 def test_v010_css_contains_workspace_layouts():

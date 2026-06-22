@@ -21,6 +21,8 @@ BACKUP_TABLES = [
     "generated_courses",
     "course_lessons",
     "rag_queries",
+    "error_analyses",
+    "provenance_events",
 ]
 
 
@@ -40,6 +42,8 @@ def create_backup(
         shutil.copytree(storage.uploads_dir, backup_dir / "uploads", dirs_exist_ok=True)
     if storage.documents_dir.exists():
         shutil.copytree(storage.documents_dir, backup_dir / "documents", dirs_exist_ok=True)
+    if storage.provenance_dir.exists():
+        shutil.copytree(storage.provenance_dir, backup_dir / "provenance", dirs_exist_ok=True)
 
     manifest = {
         "backup_time": timestamp,
@@ -101,4 +105,3 @@ def _git_value(command: list[str]) -> str:
     if result.returncode != 0:
         return ""
     return result.stdout.strip()
-

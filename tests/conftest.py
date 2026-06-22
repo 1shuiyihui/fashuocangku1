@@ -9,7 +9,14 @@ from services.storage import Storage
 def storage(tmp_path: Path) -> Storage:
     db_path = tmp_path / "fashuo-test.db"
     uploads_dir = tmp_path / "uploads"
-    store = Storage(db_path=db_path, uploads_dir=uploads_dir)
+    documents_dir = tmp_path / "documents"
+    provenance_dir = tmp_path / "provenance"
+    store = Storage(
+        db_path=db_path,
+        uploads_dir=uploads_dir,
+        documents_dir=documents_dir,
+        provenance_dir=provenance_dir,
+    )
     store.init_db()
     store.seed_templates()
     return store

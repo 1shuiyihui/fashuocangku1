@@ -17,6 +17,8 @@ def test_create_backup_copies_database_and_manifest(storage, tmp_path):
             "notes": "",
         }
     )
+    storage.provenance_dir.mkdir(parents=True, exist_ok=True)
+    (storage.provenance_dir / "trace.md").write_text("错误还原", encoding="utf-8")
 
     backup_dir = create_backup(
         storage,
@@ -26,6 +28,9 @@ def test_create_backup_copies_database_and_manifest(storage, tmp_path):
     manifest = json.loads((backup_dir / "manifest.json").read_text(encoding="utf-8"))
 
     assert (backup_dir / storage.db_path.name).exists()
+    assert (backup_dir / "provenance" / "trace.md").read_text(encoding="utf-8") == "错误还原"
     assert manifest["reason"] == "unit_test_backup"
     assert manifest["integrity"] == "ok"
     assert manifest["table_counts"]["weak_points"] == 1
+    assert "error_analyses" in manifest["table_counts"]
+    assert "provenance_events" in manifest["table_counts"]

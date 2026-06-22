@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import hashlib
 import importlib
 import json
 from pathlib import Path
@@ -22,8 +23,10 @@ from services.cloud_sync import (
 )
 from services.course_generator import CourseGenerationError, generate_course, normalize_lessons
 from services.document_processor import OCRUnavailableError, UnsupportedDocumentError, process_document_file
+from services.error_analysis import build_error_analysis, build_review_drill_pack
 from services.migrations import SchemaTooNewError, apply_migrations, get_schema_version, list_applied_migrations
 from services.prompts import build_training_prompt
+from services.provenance import save_provenance_files
 from services.rag import format_rag_context, search_chunks
 from services.storage import Storage
 from services.versioning import APP_VERSION, SUPPORTED_SCHEMA_VERSION
@@ -31,6 +34,7 @@ from services.workflow import build_learning_loop_state, build_review_dashboard_
 
 
 DATA_ROOT = Path("data")
+PROVENANCE_ROOT = DATA_ROOT / "provenance"
 FOCUS_WEAK_POINT_KEY = "focus_weak_point_id"
 REVIEW_FOCUS_KEY = "review_focus_keyword"
 ANALYSIS_SUBJECT_FILTER_KEY = "analysis_subject_filter"
@@ -74,6 +78,7 @@ DEFAULT_MIN_DIALOGUE_ROUNDS = 3
 MAX_DIALOGUE_ROUND_OPTIONS = ["不限制", "3轮", "4轮", "5轮", "6轮", "8轮", "10轮", "15轮", "20轮"]
 REVIEW_WORKFLOW_STEPS = ["选择周期", "查看训练队列", "定位高频问题", "安排下一轮训练", "导出复盘"]
 REVIEW_DASHBOARD_SECTIONS = ["学习概况", "高频薄弱考点", "高频错因", "下一轮训练计划"]
+ERROR_ANALYSIS_SECTIONS = ["错误还原", "根因证据", "复盘练习", "变式练习", "溯源记录"]
 SIDEBAR_STATUS_TITLE = "系统状态"
 SIDEBAR_WORKFLOW_TITLE = "学习闭环"
 APP_SHELL_STYLE = """
@@ -938,6 +943,188 @@ def format_round_policy_label(min_rounds: int, max_rounds: int | None) -> str:
     return f"最少 {min_rounds} 轮｜最多 {max(max_rounds, min_rounds)} 轮"
 
 
+def format_error_analysis_markdown(weak_point: dict[str, object], analysis: dict[str, object]) -> str:
+    return "\n".join(
+        [
+            f"# 错因还原：{weak_point.get('knowledge_point', '')}",
+            "",
+            f"- 科目：{weak_point.get('subject', '')}",
+            f"- 题型：{weak_point.get('question_type', '')}",
+            f"- 错误位置：{analysis.get('error_location', '')}",
+            f"- 根因：{analysis.get('root_cause', '')}",
+            "",
+            "## 根因证据",
+            str(analysis.get("evidence", "")),
+            "",
+            "## 复盘练习",
+            str(analysis.get("review_drill", "")),
+            "",
+            "## 变式练习",
+            str(analysis.get("variant_drill", "")),
+        ]
+    )
+
+
+def record_provenance_event(
+    store: Storage,
+    entity_type: str,
+    entity_id: int | None,
+    event_type: str,
+    input_payload: dict[str, object],
+    output_text: str,
+    metadata: dict[str, object] | None = None,
+) -> int | None:
+    try:
+        saved = save_provenance_files(
+            PROVENANCE_ROOT,
+            event_type=event_type,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            input_payload=input_payload,
+            output_text=output_text,
+            metadata=metadata,
+        )
+        return store.create_provenance_event(
+            {
+                "entity_type": entity_type,
+                "entity_id": entity_id,
+                "event_type": event_type,
+                "input_path": str(saved["input_path"]),
+                "output_path": str(saved["output_path"]),
+                "metadata": saved["metadata"],
+            }
+        )
+    except Exception as exc:
+        st.warning(f"溯源文件保存失败：{exc}")
+        return None
+
+
+def create_or_refresh_error_analysis(
+    store: Storage,
+    weak_point: dict[str, object],
+    session_context: dict[str, object] | None = None,
+    event_type: str = "weak_point_error_analysis",
+) -> dict[str, object]:
+    weak_point_id = int(weak_point["id"])
+    analysis = build_error_analysis(weak_point, session_context=session_context)
+    payload = {"weak_point_id": weak_point_id, **analysis}
+    latest = store.get_latest_error_analysis(weak_point_id)
+    if latest:
+        store.update_error_analysis(int(latest["id"]), payload)
+        analysis_id = int(latest["id"])
+    else:
+        analysis_id = store.create_error_analysis(payload)
+
+    saved_analysis = {
+        **analysis,
+        "id": analysis_id,
+        "weak_point_id": weak_point_id,
+        "subject": weak_point.get("subject", ""),
+        "question_type": weak_point.get("question_type", ""),
+        "knowledge_point": weak_point.get("knowledge_point", ""),
+        "mistake_reason": weak_point.get("mistake_reason", ""),
+        "mastery_level": weak_point.get("mastery_level", ""),
+    }
+    output_text = format_error_analysis_markdown(weak_point, saved_analysis)
+    record_provenance_event(
+        store,
+        entity_type="weak_point",
+        entity_id=weak_point_id,
+        event_type=event_type,
+        input_payload={"weak_point": weak_point, "session_context": session_context or {}},
+        output_text=output_text,
+        metadata={"analysis_id": analysis_id},
+    )
+    return saved_analysis
+
+
+def render_error_analysis_card(
+    analysis: dict[str, object],
+    key_prefix: str,
+    events: list[dict[str, object]] | None = None,
+) -> None:
+    with st.container(border=True):
+        st.markdown(f"**{analysis.get('subject', '')}｜{analysis.get('knowledge_point', '')}**")
+        chip_cols = st.columns(3)
+        chip_cols[0].caption(f"{ERROR_ANALYSIS_SECTIONS[0]}：{analysis.get('error_location', '')}")
+        chip_cols[1].caption(f"{ERROR_ANALYSIS_SECTIONS[1]}：{analysis.get('root_cause', '')}")
+        chip_cols[2].caption(f"状态：{analysis.get('status', '')}")
+        st.write(str(analysis.get("evidence", "")))
+        drill_col, variant_col = st.columns(2)
+        with drill_col:
+            st.markdown(f"**{ERROR_ANALYSIS_SECTIONS[2]}**")
+            st.write(str(analysis.get("review_drill", "")))
+        with variant_col:
+            st.markdown(f"**{ERROR_ANALYSIS_SECTIONS[3]}**")
+            st.write(str(analysis.get("variant_drill", "")))
+        if events:
+            with st.expander(f"{ERROR_ANALYSIS_SECTIONS[4]}（{len(events)} 条）", expanded=False):
+                for event in events[:6]:
+                    st.caption(
+                        f"#{event.get('id')} {event.get('event_type')}｜输入：{event.get('input_path')}｜输出：{event.get('output_path')}"
+                    )
+        if st.button("围绕这个错误开始训练", key=f"{key_prefix}_train_{analysis.get('weak_point_id')}"):
+            route_to_training(int(analysis["weak_point_id"]))
+
+
+def render_review_drill_packs(error_analyses: list[dict[str, object]], key_prefix: str) -> None:
+    packs = build_review_drill_pack(error_analyses)
+    if not packs:
+        st.info("暂无错因练习包。先录入薄弱点或完成一次训练后，系统会生成复盘练习和变式练习。")
+        return
+    for index, pack in enumerate(packs[:6], start=1):
+        with st.container(border=True):
+            st.markdown(f"**#{index} {pack['root_cause']}｜{pack['count']} 次**")
+            st.caption(f"涉及考点：{pack['focus_points']}｜错误位置：{pack['error_locations']}")
+            if pack["review_drills"]:
+                st.write("复盘练习：" + "；".join(pack["review_drills"][:2]))
+            if pack["variant_drills"]:
+                st.write("变式练习：" + "；".join(pack["variant_drills"][:2]))
+            weak_point_ids = pack.get("weak_point_ids") or []
+            if weak_point_ids and st.button("训练这个错因", key=f"{key_prefix}_pack_{index}"):
+                route_to_training(int(weak_point_ids[0]))
+
+
+def filter_error_analyses_for_points(
+    error_analyses: list[dict[str, object]],
+    weak_points: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    point_ids = {int(row["id"]) for row in weak_points if row.get("id") is not None}
+    return [row for row in error_analyses if int(row.get("weak_point_id", -1)) in point_ids]
+
+
+def save_review_report_provenance_once(
+    store: Storage,
+    period: str,
+    weak_points: list[dict[str, object]],
+    sessions: list[dict[str, object]],
+    error_analyses: list[dict[str, object]],
+    report: str,
+) -> None:
+    signature_payload = {
+        "period": period,
+        "weak_point_ids": [row.get("id") for row in weak_points],
+        "session_ids": [row.get("id") for row in sessions],
+        "error_analysis_ids": [row.get("id") for row in error_analyses],
+        "report_hash": hashlib.sha256(report.encode("utf-8")).hexdigest(),
+    }
+    signature = hashlib.sha256(
+        json.dumps(signature_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    if st.session_state.get("last_review_report_trace") == signature:
+        return
+    record_provenance_event(
+        store,
+        entity_type="review_report",
+        entity_id=None,
+        event_type="review_report",
+        input_payload=signature_payload,
+        output_text=report,
+        metadata={"period": period},
+    )
+    st.session_state["last_review_report_trace"] = signature
+
+
 @st.cache_resource
 def get_storage() -> Storage:
     cloud_config = get_persistence_config()
@@ -1732,10 +1919,24 @@ def page_entry(store: Storage) -> None:
         )
         st.session_state[FOCUS_WEAK_POINT_KEY] = weak_point_id
         st.session_state["last_saved_weak_point_id"] = weak_point_id
+        saved_weak_point = store.get_weak_point(weak_point_id)
+        create_or_refresh_error_analysis(
+            store,
+            saved_weak_point,
+            event_type="entry_error_analysis",
+        )
         st.success(f"已保存训练点 #{weak_point_id}")
 
     last_saved_id = st.session_state.get("last_saved_weak_point_id")
     if last_saved_id:
+        latest_analysis = store.get_latest_error_analysis(int(last_saved_id))
+        if latest_analysis:
+            st.subheader("错误还原")
+            render_error_analysis_card(
+                latest_analysis,
+                key_prefix=f"entry_analysis_{last_saved_id}",
+                events=store.list_provenance_events("weak_point", int(last_saved_id), limit=5),
+            )
         if st.button("进入苏格拉底训练", type="primary"):
             route_to_training(int(last_saved_id))
 
@@ -1916,6 +2117,25 @@ def page_training(store: Storage) -> None:
         try:
             reply = get_ai_client().chat([{"role": "system", "content": prompt_snapshot}])
             store.add_message(session_id, "assistant", reply)
+            record_provenance_event(
+                store,
+                entity_type="session",
+                entity_id=session_id,
+                event_type="training_initial_ai_call",
+                input_payload={
+                    "weak_point": weak_point,
+                    "template": template,
+                    "student_goal": student_goal,
+                    "prompt_snapshot": prompt_snapshot,
+                    "source_context": source_context,
+                    "round_policy": {
+                        "min_dialogue_rounds": min_dialogue_rounds,
+                        "max_dialogue_rounds": max_dialogue_rounds,
+                    },
+                },
+                output_text=reply,
+                metadata={"model": st.session_state.get("model", get_default_ai_config()["model"])},
+            )
             st.rerun()
         except AIConfigurationError as exc:
             st.warning(str(exc))
@@ -1979,6 +2199,19 @@ def page_training(store: Storage) -> None:
         try:
             reply = get_ai_client().chat(history)
             store.add_message(session_id, "assistant", reply)
+            record_provenance_event(
+                store,
+                entity_type="session",
+                entity_id=session_id,
+                event_type="training_followup_ai_call",
+                input_payload={
+                    "user_input": user_input,
+                    "history": history,
+                    "completed_rounds": completed_rounds + 1,
+                },
+                output_text=reply,
+                metadata={"model": st.session_state.get("model", get_default_ai_config()["model"])},
+            )
             st.rerun()
         except AIConfigurationError as exc:
             st.warning(str(exc))
@@ -2011,6 +2244,40 @@ def page_training(store: Storage) -> None:
             summary,
             exposed_issues,
             next_review_suggestion,
+        )
+        finished_session = store.get_session(session_id)
+        session_weak_point = store.get_weak_point(int(finished_session["weak_point_id"]))
+        session_context = {
+            "summary": summary,
+            "exposed_issues": exposed_issues,
+            "next_review_suggestion": next_review_suggestion,
+            "mastery_before": finished_session.get("mastery_before", ""),
+            "mastery_after": mastery_after,
+            "messages": messages,
+        }
+        create_or_refresh_error_analysis(
+            store,
+            session_weak_point,
+            session_context=session_context,
+            event_type="training_finished_error_analysis",
+        )
+        record_provenance_event(
+            store,
+            entity_type="session",
+            entity_id=session_id,
+            event_type="training_session_summary",
+            input_payload={"session": finished_session, "messages": messages},
+            output_text="\n".join(
+                [
+                    f"# 训练复盘 #{session_id}",
+                    f"- 训练后掌握度：{mastery_after}",
+                    f"- 暴露问题：{exposed_issues}",
+                    f"- 下次复习建议：{next_review_suggestion}",
+                    "",
+                    summary,
+                ]
+            ),
+            metadata={"weak_point_id": int(finished_session["weak_point_id"])},
         )
         st.session_state["active_session_id"] = None
         st.success("训练已结束并保存。")
@@ -2080,18 +2347,58 @@ def page_knowledge_base(store: Storage) -> None:
                                 for index, chunk in enumerate(text_chunks, start=1)
                             ],
                         )
+                        record_provenance_event(
+                            store,
+                            entity_type="document",
+                            entity_id=document_id,
+                            event_type="document_processing",
+                            input_payload={
+                                "filename": uploaded_file.name,
+                                "file_type": "." + uploaded_file.name.split(".")[-1].lower(),
+                                "file_path": path,
+                            },
+                            output_text=text,
+                            metadata={"status": status, "chunk_count": len(text_chunks)},
+                        )
                         if text_chunks:
                             st.success(f"已处理 {uploaded_file.name}，生成 {len(text_chunks)} 个检索片段。")
                         else:
                             st.warning("文件已保存，但没有抽取到有效文本。扫描版 PDF 可以先转成图片再上传 OCR。")
                     except OCRUnavailableError as exc:
                         store.update_document_processing(document_id, "", "error", str(exc))
+                        record_provenance_event(
+                            store,
+                            entity_type="document",
+                            entity_id=document_id,
+                            event_type="document_processing_error",
+                            input_payload={"filename": uploaded_file.name, "file_path": path},
+                            output_text=str(exc),
+                            metadata={"status": "error"},
+                        )
                         st.error(str(exc))
                     except UnsupportedDocumentError as exc:
                         store.update_document_processing(document_id, "", "error", str(exc))
+                        record_provenance_event(
+                            store,
+                            entity_type="document",
+                            entity_id=document_id,
+                            event_type="document_processing_error",
+                            input_payload={"filename": uploaded_file.name, "file_path": path},
+                            output_text=str(exc),
+                            metadata={"status": "error"},
+                        )
                         st.error(str(exc))
                     except Exception as exc:
                         store.update_document_processing(document_id, "", "error", str(exc))
+                        record_provenance_event(
+                            store,
+                            entity_type="document",
+                            entity_id=document_id,
+                            event_type="document_processing_error",
+                            input_payload={"filename": uploaded_file.name, "file_path": path},
+                            output_text=str(exc),
+                            metadata={"status": "error"},
+                        )
                         st.error(f"处理失败：{exc}")
             documents = store.list_documents()
             render_document_cards(documents)
@@ -2107,7 +2414,16 @@ def page_knowledge_base(store: Storage) -> None:
                     st.error("请先输入考点或问题。")
                 else:
                     results = search_chunks(query, chunks, top_k=5)
-                    store.create_rag_query(query, [int(result["id"]) for result in results])
+                    query_id = store.create_rag_query(query, [int(result["id"]) for result in results])
+                    record_provenance_event(
+                        store,
+                        entity_type="rag_query",
+                        entity_id=query_id,
+                        event_type="rag_search",
+                        input_payload={"query": query},
+                        output_text=format_rag_context(results),
+                        metadata={"chunk_ids": [int(result["id"]) for result in results]},
+                    )
                     st.session_state["last_rag_query"] = query
                     st.session_state["last_rag_results"] = results
             last_results = st.session_state.get("last_rag_results", [])
@@ -2151,6 +2467,20 @@ def page_knowledge_base(store: Storage) -> None:
                                 raw_json=json.dumps(course, ensure_ascii=False),
                                 lessons=lessons,
                             )
+                            record_provenance_event(
+                                store,
+                                entity_type="course",
+                                entity_id=course_id,
+                                event_type="course_generation",
+                                input_payload={
+                                    "document_id": selected_document["id"],
+                                    "course_goal": course_goal,
+                                    "days": days,
+                                    "source_context": source_context,
+                                },
+                                output_text=json.dumps(course, ensure_ascii=False, indent=2),
+                                metadata={"lesson_count": len(lessons)},
+                            )
                             st.success(f"已生成训练计划 #{course_id}：{course['title']}")
                         except AIConfigurationError as exc:
                             st.warning(str(exc))
@@ -2181,6 +2511,21 @@ def page_knowledge_base(store: Storage) -> None:
                     subject = st.selectbox(LESSON_SUBJECT_LABEL, SUBJECTS, key=f"lesson_subject_{lesson['id']}")
                     if st.button(IMPORT_LESSON_BUTTON_LABEL, key=f"import_lesson_{lesson['id']}", use_container_width=True):
                         weak_point_id = store.import_lesson_as_weak_point(lesson["id"], subject)
+                        imported_weak_point = store.get_weak_point(weak_point_id)
+                        imported_analysis = create_or_refresh_error_analysis(
+                            store,
+                            imported_weak_point,
+                            event_type="course_import_error_analysis",
+                        )
+                        record_provenance_event(
+                            store,
+                            entity_type="course_lesson",
+                            entity_id=int(lesson["id"]),
+                            event_type="course_lesson_import",
+                            input_payload={"lesson": lesson, "subject": subject},
+                            output_text=format_error_analysis_markdown(imported_weak_point, imported_analysis),
+                            metadata={"weak_point_id": weak_point_id},
+                        )
                         st.success(f"已导入为训练点 #{weak_point_id}")
 
 
@@ -2259,6 +2604,7 @@ def page_templates(store: Storage) -> None:
 def page_analysis(store: Storage) -> None:
     weak_points = store.list_weak_points()
     sessions = store.list_sessions()
+    error_analyses = store.list_error_analyses()
     if not weak_points:
         st.info("暂无薄弱点记录。")
         return
@@ -2291,9 +2637,24 @@ def page_analysis(store: Storage) -> None:
         and (mastery_filter == "全部" or row["mastery_level"] == mastery_filter)
     ]
     filtered_state = build_learning_loop_state(filtered_points, sessions)
+    filtered_analyses = filter_error_analyses_for_points(error_analyses, filtered_points)
 
     st.subheader("训练点工作表")
     render_workflow_worktable(filtered_state["recent_entries"], limit=12, key_prefix="analysis_recent")
+
+    st.subheader("错因还原与证据链")
+    if filtered_analyses:
+        analysis_columns = st.columns(2)
+        for index, analysis in enumerate(filtered_analyses[:4]):
+            with analysis_columns[index % 2]:
+                weak_point_id = int(analysis["weak_point_id"])
+                render_error_analysis_card(
+                    analysis,
+                    key_prefix=f"analysis_error_{index}",
+                    events=store.list_provenance_events("weak_point", weak_point_id, limit=4),
+                )
+    else:
+        st.info("还没有错因还原。录入训练点或完成训练后，系统会自动生成错误位置、根因证据、复盘练习和变式练习。")
 
     left, right = st.columns([1.1, 1])
     with left:
@@ -2306,6 +2667,9 @@ def page_analysis(store: Storage) -> None:
     st.subheader("优先训练")
     render_priority_training_cards(filtered_state["priority_queue"][:5], key_prefix="analysis_priority")
 
+    st.subheader("复盘练习包")
+    render_review_drill_packs(filtered_analyses, key_prefix="analysis_drill")
+
 
 def page_review(store: Storage) -> None:
     render_panel_intro(
@@ -2316,6 +2680,7 @@ def page_review(store: Storage) -> None:
     period = st.radio("复盘周期", ["本周", "本月"], horizontal=True)
     weak_points = store.list_weak_points()
     sessions = store.list_sessions()
+    all_error_analyses = store.list_error_analyses()
     review_focus = st.session_state.get(REVIEW_FOCUS_KEY, "")
     if review_focus:
         st.info(f"当前复盘焦点：{review_focus}")
@@ -2338,6 +2703,7 @@ def page_review(store: Storage) -> None:
             st.session_state[REVIEW_FOCUS_KEY] = ""
             st.rerun()
 
+    review_error_analyses = filter_error_analyses_for_points(all_error_analyses, weak_points)
     state = build_review_dashboard_state(weak_points, sessions)
     render_review_period_bar(
         period,
@@ -2392,10 +2758,14 @@ def page_review(store: Storage) -> None:
     st.subheader(REVIEW_DASHBOARD_SECTIONS[3])
     render_review_plan_cards(state["next_cycle_plan"], key_prefix="review_plan")
 
+    st.subheader("错因复盘与变式练习")
+    render_review_drill_packs(review_error_analyses, key_prefix="review_drill")
+
     st.subheader("复盘清单")
     render_review_checklist(state["checklist"])
 
-    report = build_review_report(period, weak_points, sessions)
+    report = build_review_report(period, weak_points, sessions, error_analyses=review_error_analyses)
+    save_review_report_provenance_once(store, period, weak_points, sessions, review_error_analyses, report)
     with st.expander("Markdown 原文"):
         st.markdown(report)
     st.download_button(
@@ -2442,7 +2812,7 @@ def page_system_backup(store: Storage) -> None:
     )
 
     st.subheader("手动备份")
-    st.write("备份会复制数据库、错题图片目录和资料目录，并生成 manifest.json。")
+    st.write("备份会复制数据库、错题图片目录、资料目录和溯源文件目录，并生成 manifest.json。")
     if st.button("立即创建备份"):
         backup_dir = create_backup(store, reason="manual_backup")
         st.success(f"已创建备份：{backup_dir}")
@@ -2453,6 +2823,29 @@ def page_system_backup(store: Storage) -> None:
         st.dataframe(pd.DataFrame(migrations), use_container_width=True)
     else:
         st.info("暂无迁移记录。")
+
+    st.subheader("最近溯源记录")
+    provenance_events = store.list_provenance_events(limit=10)
+    if provenance_events:
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "id": row.get("id", ""),
+                        "entity_type": row.get("entity_type", ""),
+                        "entity_id": row.get("entity_id", ""),
+                        "event_type": row.get("event_type", ""),
+                        "input_path": row.get("input_path", ""),
+                        "output_path": row.get("output_path", ""),
+                        "created_at": row.get("created_at", ""),
+                    }
+                    for row in provenance_events
+                ]
+            ),
+            use_container_width=True,
+        )
+    else:
+        st.info("暂无溯源记录。录入、训练、资料处理或复盘后会在这里看到输入输出文件路径。")
 
     st.subheader("最近备份")
     backups = list_backups()
