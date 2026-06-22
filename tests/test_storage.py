@@ -169,3 +169,30 @@ def test_document_chunks_course_and_lesson_import(storage):
     assert imported["knowledge_point"] == "共同犯罪"
     assert imported["mistake_reason"] == "遗漏共同故意"
     assert updated_lesson["imported_weak_point_id"] == weak_point_id
+
+
+def test_lesson_import_keeps_executable_review_plan_in_notes(storage):
+    course_id = storage.create_course(
+        title="刑法可执行训练计划",
+        source_document_id=None,
+        raw_json='{"title":"刑法可执行训练计划"}',
+        lessons=[
+            {
+                "title": "犯罪中止训练",
+                "objective": "能说出犯罪中止的自动性和有效性判断。",
+                "knowledge_points": ["犯罪中止"],
+                "mistake_risks": ["中止与未遂混淆"],
+                "recommended_template": "构成要件追问",
+                "review_plan": "预计用时：20 分钟\n当日任务：默写定义；做 2 轮追问\n复盘清单：能区分中止与未遂",
+            }
+        ],
+    )
+
+    lesson = storage.list_course_lessons(course_id)[0]
+    weak_point_id = storage.import_lesson_as_weak_point(lesson["id"], subject="刑法")
+    imported = storage.get_weak_point(weak_point_id)
+
+    assert imported["knowledge_point"] == "犯罪中止"
+    assert imported["mistake_reason"] == "中止与未遂混淆"
+    assert "预计用时：20 分钟" in imported["notes"]
+    assert "复盘清单：能区分中止与未遂" in imported["notes"]

@@ -24,6 +24,38 @@ MISTAKE_REASONS = ["概念混淆", "要件遗漏", "法条不熟", "案例事实
 MASTERY_LEVELS = ["陌生", "模糊", "基本会", "熟练"]
 PAGES = ["今日学习", "错题/薄弱点录入", "苏格拉底训练", "资料知识库", "模板管理", "薄弱点分析", "周度/月度复盘", "系统与备份"]
 BEGINNER_MODE_DEFAULT = True
+COURSE_GENERATION_SECTION_TITLE = "3. 生成可执行训练计划并导入训练点"
+LESSON_SUBJECT_LABEL = "训练点科目"
+IMPORT_LESSON_BUTTON_LABEL = "导入为训练点"
+APP_GUIDE_STEPS = [
+    "录入薄弱点，或从生成课程中导入训练点。",
+    "进入苏格拉底训练，用追问暴露真实薄弱处。",
+    "每周或每月查看复盘，按高频考点和错因安排下一轮训练。",
+]
+GUIDE_STYLE = """
+<style>
+.fashuo-guide {
+    animation: fashuoGuideIn 420ms ease-out;
+    border: 1px solid #d7e8ff;
+    border-radius: 8px;
+    background: #f3f8ff;
+    padding: 16px 18px;
+    margin: 8px 0 18px;
+}
+.fashuo-guide-title {
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+.fashuo-guide ol {
+    margin-bottom: 0;
+    padding-left: 22px;
+}
+@keyframes fashuoGuideIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+</style>
+"""
 
 
 def get_next_action(
@@ -123,8 +155,13 @@ def _mapping_get(mapping: object, key: str, default: object = "") -> object:
         return default
 
 
+def render_global_style() -> None:
+    st.markdown(GUIDE_STYLE, unsafe_allow_html=True)
+
+
 def main() -> None:
     st.set_page_config(page_title="法硕苏格拉底学习器", layout="wide")
+    render_global_style()
     store = get_storage()
     render_sidebar()
     page = st.sidebar.radio("页面", PAGES)
@@ -176,6 +213,7 @@ def render_sidebar() -> None:
 
 def page_today(store: Storage) -> None:
     st.title("今日学习")
+    render_beginner_guide()
     weak_points = store.list_weak_points()
     sessions = store.list_sessions()
     stats = compute_weak_point_stats(weak_points, sessions)
@@ -197,6 +235,26 @@ def page_today(store: Storage) -> None:
             )
     else:
         st.info("先录入一个错题或薄弱点，再开始苏格拉底训练。")
+
+
+def render_beginner_guide() -> None:
+    if not st.session_state.get("beginner_mode", BEGINNER_MODE_DEFAULT):
+        return
+    if st.session_state.get("hide_beginner_guide", False):
+        return
+
+    steps = "".join(f"<li>{step}</li>" for step in APP_GUIDE_STEPS)
+    st.markdown(
+        f"""
+<div class="fashuo-guide">
+  <div class="fashuo-guide-title">第一次使用可以按这 3 步走</div>
+  <ol>{steps}</ol>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+    if st.button("收起指引"):
+        st.session_state["hide_beginner_guide"] = True
 
 
 def page_entry(store: Storage) -> None:
@@ -499,7 +557,7 @@ def page_knowledge_base(store: Storage) -> None:
         else:
             st.info("没有检索到资料片段。请先上传资料，或换一个更具体的考点。")
 
-    st.subheader("3. 生成课程并导入训练点")
+    st.subheader(COURSE_GENERATION_SECTION_TITLE)
     ready_documents = [row for row in documents if row["status"] == "ready"]
     if not ready_documents:
         st.info("先上传并成功处理一份资料后，再生成课程。")
@@ -509,7 +567,7 @@ def page_knowledge_base(store: Storage) -> None:
             ready_documents,
             format_func=lambda row: f"#{row['id']} {row['filename']}",
         )
-        course_goal = st.text_input("课程目标", value="围绕这份资料生成法硕考前苏格拉底训练课程")
+        course_goal = st.text_input("课程目标", value="围绕这份资料生成法硕考前可执行训练计划")
         days = st.slider("复习周期（天）", min_value=3, max_value=30, value=7)
         document_chunks = store.list_document_chunks(selected_document["id"])
         source_results = search_chunks(course_goal, document_chunks, top_k=8) or document_chunks[:8]
@@ -551,15 +609,15 @@ def page_knowledge_base(store: Storage) -> None:
         for lesson in lessons:
             with st.expander(f"第 {lesson['lesson_index']} 课：{lesson['title']}", expanded=False):
                 st.write(f"目标：{lesson['objective']}")
-                st.write("考点：" + "、".join(lesson["knowledge_points"]))
-                st.write("易错点：" + "、".join(lesson["mistake_risks"]))
-                st.write(f"推荐模板：{lesson['recommended_template']}")
-                st.write(f"复习计划：{lesson['review_plan']}")
+                st.write("训练点：" + "、".join(lesson["knowledge_points"]))
+                st.write("易错风险：" + "、".join(lesson["mistake_risks"]))
+                st.write(f"苏格拉底模板：{lesson['recommended_template']}")
+                st.write(f"执行安排：{lesson['review_plan']}")
                 if lesson["imported_weak_point_id"]:
                     st.success(f"已导入为薄弱点 #{lesson['imported_weak_point_id']}")
                 else:
-                    subject = st.selectbox("导入科目", SUBJECTS, key=f"lesson_subject_{lesson['id']}")
-                    if st.button("导入为苏格拉底训练点", key=f"import_lesson_{lesson['id']}"):
+                    subject = st.selectbox(LESSON_SUBJECT_LABEL, SUBJECTS, key=f"lesson_subject_{lesson['id']}")
+                    if st.button(IMPORT_LESSON_BUTTON_LABEL, key=f"import_lesson_{lesson['id']}"):
                         weak_point_id = store.import_lesson_as_weak_point(lesson["id"], subject)
                         st.success(f"已导入为薄弱点 #{weak_point_id}")
 

@@ -56,6 +56,21 @@ def test_beginner_mode_hides_advanced_prompt_editor_by_default():
     assert app.should_show_prompt_editor(beginner_mode=False, advanced_enabled=False) is True
 
 
+def test_v050_beginner_guide_and_course_import_labels():
+    import app
+    from services.versioning import APP_VERSION
+
+    assert APP_VERSION == "0.5.0"
+    assert app.COURSE_GENERATION_SECTION_TITLE == "3. 生成可执行训练计划并导入训练点"
+    assert app.LESSON_SUBJECT_LABEL == "训练点科目"
+    assert app.IMPORT_LESSON_BUTTON_LABEL == "导入为训练点"
+    assert app.APP_GUIDE_STEPS == [
+        "录入薄弱点，或从生成课程中导入训练点。",
+        "进入苏格拉底训练，用追问暴露真实薄弱处。",
+        "每周或每月查看复盘，按高频考点和错因安排下一轮训练。",
+    ]
+
+
 def test_default_ai_config_reads_streamlit_secrets_shape():
     import app
 
