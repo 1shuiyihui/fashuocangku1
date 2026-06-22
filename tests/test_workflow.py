@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from services.workflow import build_learning_loop_state
+from services.workflow import build_learning_loop_state, build_review_dashboard_state
 
 
 def _weak_point(
@@ -79,3 +79,26 @@ def test_recent_entries_use_chinese_column_ready_fields():
     assert row["考点"] == "罪刑法定原则"
     assert row["训练状态"] == "训练中"
     assert row["workflow_action"] == "继续训练"
+
+
+def test_review_dashboard_state_summarizes_review_loop():
+    weak_points = [
+        _weak_point(1, "刑法", "共同犯罪", "陌生", mistake_reason="要件遗漏"),
+        _weak_point(2, "刑法", "共同犯罪", "模糊", mistake_reason="要件遗漏"),
+        _weak_point(3, "民法", "表见代理", "熟练", mistake_reason="概念混淆"),
+    ]
+    sessions = [
+        {"id": 10, "weak_point_id": 1, "status": "finished", "started_at": "2026-06-22T10:00:00+00:00"},
+        {"id": 11, "weak_point_id": 2, "status": "active", "started_at": "2026-06-22T11:00:00+00:00"},
+    ]
+
+    state = build_review_dashboard_state(weak_points, sessions)
+
+    assert state["kpis"]["新增训练点"] == 3
+    assert state["kpis"]["完成训练"] == 1
+    assert state["kpis"]["高风险考点"] == 2
+    assert state["kpis"]["待复训"] == 2
+    assert state["subject_progress"][0]["subject"] == "刑法"
+    assert state["subject_progress"][0]["completion_text"] == "1/2"
+    assert state["next_cycle_plan"][0]["title"] == "共同犯罪"
+    assert state["next_cycle_plan"][0]["template"] == "构成要件追问"

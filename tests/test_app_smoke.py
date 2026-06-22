@@ -56,11 +56,11 @@ def test_beginner_mode_hides_advanced_prompt_editor_by_default():
     assert app.should_show_prompt_editor(beginner_mode=False, advanced_enabled=False) is True
 
 
-def test_v090_beginner_guide_and_course_import_labels():
+def test_v010_beginner_guide_and_course_import_labels():
     import app
     from services.versioning import APP_VERSION
 
-    assert APP_VERSION == "0.9.0"
+    assert APP_VERSION == "0.10.0"
     assert app.COURSE_GENERATION_SECTION_TITLE == "3. 生成可执行训练计划并导入训练点"
     assert app.LESSON_SUBJECT_LABEL == "训练点科目"
     assert app.IMPORT_LESSON_BUTTON_LABEL == "导入为训练点"
@@ -137,11 +137,11 @@ def test_persistence_config_reads_streamlit_secrets_shape():
     assert app.get_persistence_status_label() in {"GitHub 云端快照", "本地临时存储"}
 
 
-def test_v090_workflow_navigation_contract():
+def test_v010_workflow_navigation_contract():
     import app
     from services.versioning import APP_VERSION
 
-    assert APP_VERSION == "0.9.0"
+    assert APP_VERSION == "0.10.0"
     assert app.FOCUS_WEAK_POINT_KEY == "focus_weak_point_id"
     assert app.REVIEW_FOCUS_KEY == "review_focus_keyword"
     assert app.WORKFLOW_LOOP_STEPS == [
@@ -163,12 +163,12 @@ def test_get_focused_weak_point_index_falls_back_safely():
     assert app.get_focused_weak_point_index([], 7) == 0
 
 
-def test_v090_workspace_ui_contract():
+def test_v010_workspace_ui_contract():
     import app
     from services.versioning import APP_VERSION
 
-    assert APP_VERSION == "0.9.0"
-    assert app.get_app_version() == "0.9.0"
+    assert APP_VERSION == "0.10.0"
+    assert app.get_app_version() == "0.10.0"
     assert app.ENTRY_WORKFLOW_STEPS == ["上传或拍照", "结构化训练点", "AI 抽取与确认"]
     assert app.KNOWLEDGE_WORKFLOW_STEPS == [
         "上传并建立索引",
@@ -178,9 +178,17 @@ def test_v090_workspace_ui_contract():
     ]
     assert app.TRAINING_PANEL_SECTIONS == ["模板提示", "参考资料片段", "掌握度评估", "本次训练记录"]
     assert app.SIDEBAR_STATUS_TITLE == "系统状态"
+    assert app.REVIEW_WORKFLOW_STEPS == [
+        "选择周期",
+        "查看训练队列",
+        "定位高频问题",
+        "安排下一轮训练",
+        "导出复盘",
+    ]
+    assert app.REVIEW_DASHBOARD_SECTIONS == ["学习概况", "高频薄弱考点", "高频错因", "下一轮训练计划"]
 
 
-def test_v090_css_contains_workspace_layouts():
+def test_v010_css_contains_workspace_layouts():
     import app
 
     expected_classes = [
@@ -191,6 +199,10 @@ def test_v090_css_contains_workspace_layouts():
         "knowledge-workflow-grid",
         "lesson-plan-card",
         "source-result-card",
+        "review-dashboard-grid",
+        "review-summary-card",
+        "review-plan-card",
+        "review-insight-card",
     ]
 
     for class_name in expected_classes:

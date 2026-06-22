@@ -27,7 +27,7 @@ from services.prompts import build_training_prompt
 from services.rag import format_rag_context, search_chunks
 from services.storage import Storage
 from services.versioning import APP_VERSION, SUPPORTED_SCHEMA_VERSION
-from services.workflow import build_learning_loop_state
+from services.workflow import build_learning_loop_state, build_review_dashboard_state
 
 
 DATA_ROOT = Path("data")
@@ -70,6 +70,8 @@ APP_GUIDE_STEPS = [
 ENTRY_WORKFLOW_STEPS = ["上传或拍照", "结构化训练点", "AI 抽取与确认"]
 KNOWLEDGE_WORKFLOW_STEPS = ["上传并建立索引", "检索资料片段", "生成可执行训练计划", "导入为训练点"]
 TRAINING_PANEL_SECTIONS = ["模板提示", "参考资料片段", "掌握度评估", "本次训练记录"]
+REVIEW_WORKFLOW_STEPS = ["选择周期", "查看训练队列", "定位高频问题", "安排下一轮训练", "导出复盘"]
+REVIEW_DASHBOARD_SECTIONS = ["学习概况", "高频薄弱考点", "高频错因", "下一轮训练计划"]
 SIDEBAR_STATUS_TITLE = "系统状态"
 SIDEBAR_WORKFLOW_TITLE = "学习闭环"
 APP_SHELL_STYLE = """
@@ -584,6 +586,116 @@ html, body, [data-testid="stAppViewContainer"] {
     flex-wrap: wrap;
     gap: 6px;
 }
+.review-dashboard-grid {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: 1.25fr .95fr;
+    margin: 10px 0 18px;
+}
+.review-summary-card,
+.review-plan-card,
+.review-insight-card {
+    background: #ffffff;
+    border: 1px solid #e5e7ef;
+    border-radius: 8px;
+    padding: 15px 16px;
+}
+.review-summary-card {
+    min-height: 260px;
+}
+.review-period-bar {
+    align-items: center;
+    background: #ffffff;
+    border: 1px solid #e5e7ef;
+    border-radius: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    justify-content: space-between;
+    margin: 8px 0 16px;
+    padding: 12px 14px;
+}
+.review-period-title {
+    color: #111827;
+    font-size: 15px;
+    font-weight: 760;
+}
+.review-period-subtitle {
+    color: #6b7280;
+    font-size: 12px;
+    margin-top: 2px;
+}
+.progress-row {
+    margin: 10px 0;
+}
+.progress-row-top {
+    align-items: center;
+    display: flex;
+    justify-content: space-between;
+    color: #374151;
+    font-size: 13px;
+    margin-bottom: 5px;
+}
+.progress-track {
+    background: #edf1f7;
+    border-radius: 999px;
+    height: 8px;
+    overflow: hidden;
+}
+.progress-fill {
+    background: #2563eb;
+    border-radius: 999px;
+    height: 8px;
+}
+.review-insight-grid {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin: 10px 0 18px;
+}
+.review-insight-row {
+    border-bottom: 1px solid #eef0f5;
+    padding: 10px 0;
+}
+.review-insight-row:last-child {
+    border-bottom: 0;
+}
+.review-plan-grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin: 10px 0 18px;
+}
+.review-plan-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.review-plan-day {
+    color: #2563eb;
+    font-size: 12px;
+    font-weight: 760;
+}
+.review-plan-title {
+    color: #111827;
+    font-size: 15px;
+    font-weight: 760;
+}
+.review-checklist {
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin: 8px 0 18px;
+}
+.review-check-item {
+    background: #ffffff;
+    border: 1px solid #e5e7ef;
+    border-radius: 8px;
+    color: #374151;
+    font-size: 13px;
+    font-weight: 650;
+    padding: 12px 13px;
+}
 .loop-card-grid {
     display: grid;
     gap: 14px;
@@ -677,7 +789,11 @@ div[data-testid="stExpander"] {
     .training-cockpit-grid,
     .training-context-bar,
     .training-timeline,
-    .lesson-plan-grid {
+    .lesson-plan-grid,
+    .review-dashboard-grid,
+    .review-insight-grid,
+    .review-plan-grid,
+    .review-checklist {
         grid-template-columns: 1fr;
     }
     .workflow-row {
@@ -997,6 +1113,127 @@ def render_lesson_plan_card(lesson: dict[str, object]) -> None:
 """,
         unsafe_allow_html=True,
     )
+
+
+def render_review_period_bar(period: str, weak_count: int, finished_count: int) -> None:
+    st.markdown(
+        f"""
+<div class="review-period-bar">
+  <div>
+    <div class="review-period-title">{escape_html(period)}复盘</div>
+    <div class="review-period-subtitle">训练点 {escape_html(weak_count)} 个 · 已完成训练 {escape_html(finished_count)} 次</div>
+  </div>
+  <div class="lesson-chip-row">
+    <span class="chip chip-blue">复盘驾驶舱</span>
+    <span class="chip chip-green">下一轮计划</span>
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def render_review_kpis(kpis: dict[str, object]) -> None:
+    render_kpi_cards(
+        [
+            ("新增训练点", kpis.get("新增训练点", 0), "本期进入复盘范围"),
+            ("完成训练", kpis.get("完成训练", 0), "已结束并保存"),
+            ("高风险考点", kpis.get("高风险考点", 0), "陌生或模糊"),
+            ("待复训", kpis.get("待复训", 0), "未完成闭环"),
+        ]
+    )
+
+
+def render_subject_progress(rows: list[dict[str, object]]) -> None:
+    if not rows:
+        st.caption("暂无科目训练进度。")
+        return
+    for row in rows[:5]:
+        rate = float(row.get("completion_rate", 0) or 0)
+        width = max(4, min(100, int(rate * 100)))
+        st.markdown(
+            f"""
+<div class="progress-row">
+  <div class="progress-row-top"><span>{escape_html(row.get("subject", ""))}</span><span>{escape_html(row.get("completion_text", ""))}</span></div>
+  <div class="progress-track"><div class="progress-fill" style="width:{width}%"></div></div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
+
+def render_review_insight_rows(rows: list[dict[str, object]], title_key: str, meta_builder: object) -> None:
+    if not rows:
+        st.caption("暂无数据。")
+        return
+    for row in rows[:5]:
+        meta = meta_builder(row) if callable(meta_builder) else ""
+        st.markdown(
+            f"""
+<div class="review-insight-row">
+  <div class="rank-title">{escape_html(row.get(title_key, ""))}</div>
+  <div class="rank-meta">{escape_html(meta)}</div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
+
+def render_review_training_queue(rows: list[dict[str, object]], key_prefix: str) -> None:
+    if not rows:
+        st.info("本期没有待处理训练点。")
+        return
+    for index, row in enumerate(rows[:4]):
+        st.markdown(
+            f"""
+<div class="review-summary-card">
+  <div class="lesson-chip-row">
+    <span class="chip chip-blue">{escape_html(row.get("subject", ""))}</span>
+    <span class="chip chip-amber">{escape_html(row.get("mastery_level", ""))}</span>
+    <span class="chip chip-gray">{escape_html(row.get("training_status", ""))}</span>
+  </div>
+  <div class="lesson-plan-title">{escape_html(row.get("knowledge_point", ""))}</div>
+  <div class="section-panel-subtitle">错因：{escape_html(row.get("mistake_reason", ""))}</div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+        if st.button(str(row.get("workflow_action", "开始训练")), key=f"{key_prefix}_{index}_{row.get('id')}"):
+            route_to_training(int(row["id"]))
+
+
+def render_review_plan_cards(plan_rows: list[dict[str, object]], key_prefix: str) -> None:
+    if not plan_rows:
+        st.info("暂无下一轮训练计划。先录入或导入训练点后再复盘。")
+        return
+    cols = st.columns(3)
+    for index, row in enumerate(plan_rows):
+        with cols[index % 3]:
+            st.markdown(
+                f"""
+<div class="review-plan-card">
+  <div class="review-plan-day">{escape_html(row.get("day", ""))}</div>
+  <div class="review-plan-title">{escape_html(row.get("title", ""))}</div>
+  <div class="lesson-chip-row">
+    <span class="chip chip-blue">{escape_html(row.get("subject", ""))}</span>
+    <span class="chip chip-amber">{escape_html(row.get("mastery_level", ""))}</span>
+  </div>
+  <div class="section-panel-subtitle">模板：{escape_html(row.get("template", ""))} · 预计 {escape_html(row.get("estimated_minutes", ""))} 分钟</div>
+</div>
+""",
+                unsafe_allow_html=True,
+            )
+            weak_point_id = row.get("weak_point_id")
+            if weak_point_id is not None and st.button("开始训练", key=f"{key_prefix}_{weak_point_id}", use_container_width=True):
+                route_to_training(int(weak_point_id))
+
+
+def render_review_checklist(items: list[str]) -> None:
+    html_items = "".join(
+        f'<div class="review-check-item">✓ {escape_html(item)}</div>'
+        for item in items
+    )
+    st.markdown(f'<div class="review-checklist">{html_items}</div>', unsafe_allow_html=True)
 
 
 def render_sidebar_status(ai_status: str, persistence_status: str) -> None:
@@ -1989,6 +2226,11 @@ def page_analysis(store: Storage) -> None:
 
 
 def page_review(store: Storage) -> None:
+    render_panel_intro(
+        "把阶段结果转成下一轮训练",
+        "复盘页先看训练队列和高频问题，再安排下一轮苏格拉底追问，最后导出 Markdown 留档。",
+    )
+    render_process_steps(REVIEW_WORKFLOW_STEPS)
     period = st.radio("复盘周期", ["本周", "本月"], horizontal=True)
     weak_points = store.list_weak_points()
     sessions = store.list_sessions()
@@ -2014,12 +2256,66 @@ def page_review(store: Storage) -> None:
             st.session_state[REVIEW_FOCUS_KEY] = ""
             st.rerun()
 
-    state = build_learning_loop_state(weak_points, sessions)
-    st.subheader("复盘前先看训练队列")
-    render_priority_training_cards(state["priority_queue"][:3], key_prefix="review_priority")
+    state = build_review_dashboard_state(weak_points, sessions)
+    render_review_period_bar(
+        period,
+        int(state["kpis"]["新增训练点"]),
+        int(state["kpis"]["完成训练"]),
+    )
+    render_review_kpis(state["kpis"])
+
+    left, right = st.columns([1.25, 1])
+    with left:
+        st.subheader("复盘前训练队列")
+        render_review_training_queue(state["training_queue"], key_prefix="review_queue")
+    with right:
+        st.subheader(REVIEW_DASHBOARD_SECTIONS[0])
+        with st.container(border=True):
+            st.markdown("**科目训练完成度**")
+            render_subject_progress(state["subject_progress"])
+            st.markdown("**本期复盘判断**")
+            if state["kpis"]["待复训"]:
+                st.caption("仍有训练点没有完成追问闭环，建议先处理待复训项目。")
+            else:
+                st.caption("本期训练点已完成追问闭环，可以进入巩固和表达修复。")
+
+    insight_col1, insight_col2, insight_col3 = st.columns(3)
+    with insight_col1:
+        with st.container(border=True):
+            st.markdown(f"**{REVIEW_DASHBOARD_SECTIONS[1]}**")
+            render_review_insight_rows(
+                state["knowledge_focus"],
+                "knowledge_point",
+                lambda row: f"{row.get('subjects', '')} · {row.get('count', 0)} 次 · {row.get('recommendation', '')}",
+            )
+    with insight_col2:
+        with st.container(border=True):
+            st.markdown(f"**{REVIEW_DASHBOARD_SECTIONS[2]}**")
+            render_review_insight_rows(
+                state["mistake_focus"],
+                "mistake_reason",
+                lambda row: f"{row.get('count', 0)} 次 · {row.get('workflow_action', '')}",
+            )
+    with insight_col3:
+        with st.container(border=True):
+            st.markdown("**本期关键结论**")
+            if state["knowledge_focus"]:
+                first = state["knowledge_focus"][0]
+                st.caption(f"优先处理：{first.get('knowledge_point', '')}")
+            if state["mistake_focus"]:
+                first_reason = state["mistake_focus"][0]
+                st.caption(f"主要错因：{first_reason.get('mistake_reason', '')}")
+            st.caption("下一轮训练应优先修复低掌握度考点，再补主观题采分表达。")
+
+    st.subheader(REVIEW_DASHBOARD_SECTIONS[3])
+    render_review_plan_cards(state["next_cycle_plan"], key_prefix="review_plan")
+
+    st.subheader("复盘清单")
+    render_review_checklist(state["checklist"])
 
     report = build_review_report(period, weak_points, sessions)
-    st.markdown(report)
+    with st.expander("Markdown 原文"):
+        st.markdown(report)
     st.download_button(
         "下载 Markdown",
         data=report.encode("utf-8"),

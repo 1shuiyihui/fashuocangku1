@@ -47,6 +47,77 @@ def build_learning_loop_state(
     }
 
 
+def build_review_dashboard_state(
+    weak_points: list[dict[str, Any]],
+    sessions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    loop_state = build_learning_loop_state(weak_points, sessions)
+    finished_count = loop_state["totals"]["finished_sessions"]
+    high_risk_count = sum(
+        1 for row in weak_points if MASTERY_RISK.get(str(row.get("mastery_level", "")), 0) >= 3
+    )
+    active_or_unfinished = [
+        row for row in loop_state["priority_queue"] if row.get("training_status") != "已完成"
+    ]
+
+    return {
+        "kpis": {
+            "新增训练点": len(weak_points),
+            "完成训练": finished_count,
+            "高风险考点": high_risk_count,
+            "待复训": len(active_or_unfinished),
+        },
+        "subject_progress": _review_subject_progress(loop_state["subject_cards"]),
+        "knowledge_focus": loop_state["knowledge_rankings"][:5],
+        "mistake_focus": loop_state["mistake_reason_queue"][:5],
+        "training_queue": loop_state["priority_queue"][:5],
+        "next_cycle_plan": _next_cycle_plan(loop_state["priority_queue"]),
+        "checklist": [
+            "完成低掌握考点追问",
+            "补写主观题采分表达",
+            "回看错因分布",
+            "更新训练点掌握度",
+        ],
+    }
+
+
+def _review_subject_progress(subject_cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows = []
+    for card in subject_cards:
+        count = int(card.get("count", 0))
+        trained_count = int(card.get("trained_count", 0))
+        rate = round(trained_count / count, 2) if count else 0
+        rows.append(
+            {
+                "subject": card.get("subject", ""),
+                "completion_rate": rate,
+                "completion_text": f"{trained_count}/{count}",
+                "low_mastery_count": card.get("low_mastery_count", 0),
+            }
+        )
+    return sorted(rows, key=lambda row: (-row["low_mastery_count"], row["subject"]))
+
+
+def _next_cycle_plan(priority_queue: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    plan = []
+    for day_index, row in enumerate(priority_queue[:7], start=1):
+        mastery_level = str(row.get("mastery_level", ""))
+        template = "构成要件追问" if mastery_level in {"陌生", "模糊"} else "案例分析追问"
+        plan.append(
+            {
+                "day": f"Day {day_index}",
+                "title": row.get("knowledge_point", ""),
+                "subject": row.get("subject", ""),
+                "mastery_level": mastery_level,
+                "mistake_reason": row.get("mistake_reason", ""),
+                "template": template,
+                "estimated_minutes": 25 if mastery_level in {"陌生", "模糊"} else 15,
+                "weak_point_id": row.get("id"),
+            }
+        )
+    return plan
+
+
 def _sessions_by_weak_point(sessions: list[dict[str, Any]]) -> dict[int, list[dict[str, Any]]]:
     grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for session in sessions:
