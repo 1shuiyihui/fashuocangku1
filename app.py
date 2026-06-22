@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+from pathlib import Path
 from sqlite3 import IntegrityError
 
 import pandas as pd
@@ -10,6 +11,14 @@ import streamlit as st
 from services.ai_client import AIClient, AIConfigurationError
 from services.analysis import build_review_report, compute_weak_point_stats
 from services.backup import collect_table_counts, create_backup, integrity_check, list_backups
+from services.cloud_sync import (
+    CloudSyncConfig,
+    CloudSyncError,
+    GitHubSnapshotSync,
+    get_cloud_sync_status_label,
+    load_cloud_sync_config,
+    validate_cloud_sync_config,
+)
 from services.course_generator import CourseGenerationError, generate_course, normalize_lessons
 from services.document_processor import OCRUnavailableError, UnsupportedDocumentError, process_document_file
 from services.migrations import SchemaTooNewError, apply_migrations, get_schema_version, list_applied_migrations
@@ -17,6 +26,9 @@ from services.prompts import build_training_prompt
 from services.rag import format_rag_context, search_chunks
 from services.storage import Storage
 from services.versioning import APP_VERSION, SUPPORTED_SCHEMA_VERSION
+
+
+DATA_ROOT = Path("data")
 
 
 SUBJECTS = ["刑法", "民法", "法理", "宪法", "法制史"]
@@ -324,6 +336,20 @@ def escape_html(value: object) -> str:
 
 @st.cache_resource
 def get_storage() -> Storage:
+    cloud_config = get_persistence_config()
+    cloud_sync: GitHubSnapshotSync | None = None
+    if cloud_config.enabled:
+        try:
+            validate_cloud_sync_config(cloud_config)
+            cloud_sync = GitHubSnapshotSync(cloud_config, app_version=APP_VERSION)
+            cloud_sync.restore(DATA_ROOT)
+        except CloudSyncError as exc:
+            st.error(f"云端数据恢复失败：{exc}")
+            st.stop()
+        except Exception as exc:
+            st.error(f"云端数据恢复失败：{exc}")
+            st.stop()
+
     store = Storage()
     store.init_db()
     try:
@@ -332,7 +358,22 @@ def get_storage() -> Storage:
         st.error(str(exc))
         st.stop()
     store.seed_templates()
+    if cloud_sync is not None:
+        store.after_write = lambda reason: cloud_sync.upload(DATA_ROOT, reason=reason)
     return store
+
+
+def get_persistence_config(secrets: object | None = None) -> CloudSyncConfig:
+    if secrets is None:
+        try:
+            secrets = st.secrets
+        except Exception:
+            secrets = {}
+    return load_cloud_sync_config(secrets)
+
+
+def get_persistence_status_label(config: CloudSyncConfig | None = None) -> str:
+    return get_cloud_sync_status_label(config or get_persistence_config())
 
 
 def get_ai_client() -> AIClient:
@@ -467,8 +508,11 @@ def render_workspace_header(page: str) -> None:
     defaults = get_default_ai_config()
     api_key = st.session_state.get("api_key", defaults["api_key"])
     ai_status = get_ai_status_label({"api_key": str(api_key or "")})
+    persistence_config = get_persistence_config()
+    persistence_status = get_persistence_status_label(persistence_config)
     group_name = get_page_group(page)
     subtitle = PAGE_SUBTITLES.get(page, "")
+    persistence_class = "status-pill status-pill-primary" if persistence_config.enabled else "status-pill"
     status_class = "status-pill status-pill-primary" if ai_status == "AI 已配置" else "status-pill"
     st.markdown(
         f"""
@@ -481,6 +525,7 @@ def render_workspace_header(page: str) -> None:
   <div class="app-topbar-status">
     <span class="status-pill">v{escape_html(APP_VERSION)}</span>
     <span class="{status_class}">{escape_html(ai_status)}</span>
+    <span class="{persistence_class}">{escape_html(persistence_status)}</span>
   </div>
 </div>
 """,
@@ -1049,6 +1094,16 @@ def page_system_backup(store: Storage) -> None:
         st.warning("数据库版本低于当前应用支持版本。启动流程会尝试备份后迁移。")
     else:
         st.success("数据库版本与当前应用匹配。")
+
+    persistence_config = get_persistence_config()
+    st.subheader("云端持久化")
+    if persistence_config.enabled:
+        st.success("已开启 GitHub 云端快照。应用启动会先恢复快照，写入数据后会上传新快照。")
+        st.write(f"仓库：`{persistence_config.repo}`")
+        st.write(f"快照分支：`{persistence_config.branch}`")
+        st.write(f"快照文件：`{persistence_config.snapshot_path}`")
+    else:
+        st.info("当前使用本地临时存储。Streamlit Cloud 重启或重新部署后，运行时新增数据可能丢失。")
 
     st.subheader("数据完整性")
     current_integrity = integrity_check(store)

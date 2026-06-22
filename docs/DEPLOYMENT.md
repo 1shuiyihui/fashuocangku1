@@ -18,8 +18,8 @@
 
 ```toml
 [ai]
-api_base = "https://api.openai.com/v1"
-model = "gpt-4.1-mini"
+api_base = "https://api.deepseek.com"
+model = "deepseek-v4-pro"
 api_key = "replace-with-your-api-key"
 ```
 
@@ -49,6 +49,34 @@ api_key = "replace-with-your-api-key"
 - 资料文件：30 MB
 
 如果后续同时使用人数明显增加，或 OCR/课程生成经常排队，再考虑迁移到 FastAPI、PostgreSQL 和后台任务队列。
+
+## Streamlit Cloud 持久化配置 v0.7.0
+
+Streamlit Cloud 重启或重新部署时，运行时磁盘会回到 GitHub 代码快照。v0.7.0 增加了 GitHub 私有快照同步，避免新增记录、上传资料、RAG 片段、课程和训练消息在重启后丢失。
+
+在 Streamlit Cloud 的 App Secrets 中填写：
+
+```toml
+[ai]
+api_base = "https://api.deepseek.com"
+model = "deepseek-v4-pro"
+api_key = "replace-with-your-deepseek-key"
+
+[persistence]
+enabled = true
+provider = "github"
+repo = "1shuiyihui/fashuocangku1"
+branch = "cloud-data"
+source_branch = "codex/fashuo-socratic-local-tool"
+snapshot_path = "fashuo-cloud-snapshot.zip"
+github_token = "replace-with-github-token"
+```
+
+`github_token` 建议使用 GitHub fine-grained personal access token，只授权当前私有仓库，权限选择 `Contents: Read and write`。不要把 token 写进代码或提交到 GitHub。
+
+数据快照会写入单独的 `cloud-data` 分支，不写入正在部署的 `codex/fashuo-socratic-local-tool` 分支，避免每次保存学习记录都触发 Streamlit 重新部署。
+
+配置后重启应用，顶栏应显示 `GitHub 云端快照`。如果显示 `本地临时存储`，说明 `[persistence]` 没有启用或 Secrets 没有生效。
 
 ## 上线后检查
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 import json
 import shutil
@@ -27,12 +27,14 @@ class Storage:
         documents_dir: Path | str = "data/documents",
         max_upload_bytes: int = MAX_UPLOAD_BYTES,
         max_document_upload_bytes: int = MAX_DOCUMENT_UPLOAD_BYTES,
+        after_write: Callable[[str], None] | None = None,
     ):
         self.db_path = Path(db_path)
         self.uploads_dir = Path(uploads_dir)
         self.documents_dir = Path(documents_dir)
         self.max_upload_bytes = max_upload_bytes
         self.max_document_upload_bytes = max_document_upload_bytes
+        self.after_write = after_write
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -41,17 +43,22 @@ class Storage:
         self.documents_dir.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self.db_path, timeout=SQLITE_BUSY_TIMEOUT_MS / 1000)
         conn.row_factory = sqlite3.Row
+        changed = False
         try:
             conn.execute("PRAGMA foreign_keys = ON")
             conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
             conn.execute("PRAGMA journal_mode = WAL")
+            changes_before = conn.total_changes
             yield conn
+            changed = conn.total_changes > changes_before
             conn.commit()
         except Exception:
             conn.rollback()
             raise
         finally:
             conn.close()
+        if changed and self.after_write is not None:
+            self.after_write("sqlite_commit")
 
     def init_db(self) -> None:
         with self.connect() as conn:

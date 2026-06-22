@@ -91,11 +91,33 @@ winget install UB-Mannheim.TesseractOCR
 
 在侧边栏输入 OpenAI-compatible API 配置：
 
-- API Base，例如 `https://api.openai.com/v1`
-- Model，例如 `gpt-4.1-mini`
+- API Base，例如 `https://api.deepseek.com`
+- Model，例如 `deepseek-v4-pro`
 - API Key
 
 没有 API Key 时，错题录入、模板管理、薄弱点分析和复盘仍可使用；苏格拉底训练聊天会提示补充配置。
+
+## Streamlit Cloud 云端持久化
+
+部署到 Streamlit Cloud 时，建议把 DeepSeek 和数据持久化都配置在 App Secrets：
+
+```toml
+[ai]
+api_base = "https://api.deepseek.com"
+model = "deepseek-v4-pro"
+api_key = "replace-with-your-deepseek-key"
+
+[persistence]
+enabled = true
+provider = "github"
+repo = "1shuiyihui/fashuocangku1"
+branch = "cloud-data"
+source_branch = "codex/fashuo-socratic-local-tool"
+snapshot_path = "fashuo-cloud-snapshot.zip"
+github_token = "replace-with-github-token"
+```
+
+开启后，应用启动时会先从 `cloud-data` 分支恢复 `data/fashuo.db`、`data/uploads/` 和 `data/documents/`，写入学习记录后会自动上传新的快照。`github_token` 只放在 Streamlit Secrets，不要提交到 GitHub。
 
 ## 本地验收流程
 

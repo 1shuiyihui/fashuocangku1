@@ -56,11 +56,11 @@ def test_beginner_mode_hides_advanced_prompt_editor_by_default():
     assert app.should_show_prompt_editor(beginner_mode=False, advanced_enabled=False) is True
 
 
-def test_v060_beginner_guide_and_course_import_labels():
+def test_v070_beginner_guide_and_course_import_labels():
     import app
     from services.versioning import APP_VERSION
 
-    assert APP_VERSION == "0.6.0"
+    assert APP_VERSION == "0.7.0"
     assert app.COURSE_GENERATION_SECTION_TITLE == "3. 生成可执行训练计划并导入训练点"
     assert app.LESSON_SUBJECT_LABEL == "训练点科目"
     assert app.IMPORT_LESSON_BUTTON_LABEL == "导入为训练点"
@@ -71,7 +71,7 @@ def test_v060_beginner_guide_and_course_import_labels():
     ]
 
 
-def test_v060_feishu_style_navigation_groups_cover_all_pages():
+def test_v070_feishu_style_navigation_groups_cover_all_pages():
     import app
 
     grouped_pages = [page for _, pages in app.NAV_GROUPS for page in pages]
@@ -83,7 +83,7 @@ def test_v060_feishu_style_navigation_groups_cover_all_pages():
     assert app.get_page_group("系统与备份") == "系统"
 
 
-def test_v060_shell_style_and_status_helpers():
+def test_v070_shell_style_and_status_helpers():
     import app
 
     assert "app-topbar" in app.APP_SHELL_STYLE
@@ -112,3 +112,26 @@ def test_default_ai_config_reads_streamlit_secrets_shape():
         "model": "example-model",
         "api_key": "secret-key",
     }
+
+
+def test_persistence_config_reads_streamlit_secrets_shape():
+    import app
+
+    config = app.get_persistence_config(
+        {
+            "persistence": {
+                "enabled": True,
+                "provider": "github",
+                "repo": "1shuiyihui/fashuocangku1",
+                "branch": "cloud-data",
+                "source_branch": "codex/fashuo-socratic-local-tool",
+                "snapshot_path": "fashuo-cloud-snapshot.zip",
+                "github_token": "token",
+            }
+        }
+    )
+
+    assert config.enabled is True
+    assert config.repo == "1shuiyihui/fashuocangku1"
+    assert app.get_persistence_status_label(config) == "GitHub 云端快照"
+    assert app.get_persistence_status_label() in {"GitHub 云端快照", "本地临时存储"}
