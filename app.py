@@ -8,18 +8,21 @@ import streamlit as st
 
 from services.ai_client import AIClient, AIConfigurationError
 from services.analysis import build_review_report, compute_weak_point_stats
+from services.backup import collect_table_counts, create_backup, integrity_check, list_backups
 from services.course_generator import CourseGenerationError, generate_course, normalize_lessons
 from services.document_processor import OCRUnavailableError, UnsupportedDocumentError, process_document_file
+from services.migrations import SchemaTooNewError, apply_migrations, get_schema_version, list_applied_migrations
 from services.prompts import build_training_prompt
 from services.rag import format_rag_context, search_chunks
 from services.storage import Storage
+from services.versioning import APP_VERSION, SUPPORTED_SCHEMA_VERSION
 
 
 SUBJECTS = ["刑法", "民法", "法理", "宪法", "法制史"]
 QUESTION_TYPES = ["单选", "多选", "简答", "论述", "案例分析"]
 MISTAKE_REASONS = ["概念混淆", "要件遗漏", "法条不熟", "案例事实误判", "记忆不牢", "表达不规范"]
 MASTERY_LEVELS = ["陌生", "模糊", "基本会", "熟练"]
-PAGES = ["今日学习", "错题/薄弱点录入", "苏格拉底训练", "资料知识库", "模板管理", "薄弱点分析", "周度/月度复盘"]
+PAGES = ["今日学习", "错题/薄弱点录入", "苏格拉底训练", "资料知识库", "模板管理", "薄弱点分析", "周度/月度复盘", "系统与备份"]
 BEGINNER_MODE_DEFAULT = True
 
 
@@ -66,6 +69,11 @@ def should_show_prompt_editor(beginner_mode: bool, advanced_enabled: bool) -> bo
 def get_storage() -> Storage:
     store = Storage()
     store.init_db()
+    try:
+        apply_migrations(store, reason=f"startup_{APP_VERSION}")
+    except SchemaTooNewError as exc:
+        st.error(str(exc))
+        st.stop()
     store.seed_templates()
     return store
 
@@ -96,8 +104,10 @@ def main() -> None:
         page_templates(store)
     elif page == "薄弱点分析":
         page_analysis(store)
-    else:
+    elif page == "周度/月度复盘":
         page_review(store)
+    else:
+        page_system_backup(store)
 
 
 def render_sidebar() -> None:
@@ -620,6 +630,66 @@ def page_review(store: Storage) -> None:
         file_name=f"{period}复盘.md",
         mime="text/markdown",
     )
+
+
+def page_system_backup(store: Storage) -> None:
+    st.title("系统与备份")
+    st.caption("这里用于检查系统版本、数据库版本、数据完整性，并手动创建完整备份。")
+
+    schema_version = get_schema_version(store)
+    col1, col2, col3 = st.columns(3)
+    col1.metric("应用版本", APP_VERSION)
+    col2.metric("数据库版本", schema_version)
+    col3.metric("支持版本", SUPPORTED_SCHEMA_VERSION)
+
+    if schema_version > SUPPORTED_SCHEMA_VERSION:
+        st.error("数据库版本高于当前应用支持版本。为保护数据，当前版本不应继续写入。")
+    elif schema_version < SUPPORTED_SCHEMA_VERSION:
+        st.warning("数据库版本低于当前应用支持版本。启动流程会尝试备份后迁移。")
+    else:
+        st.success("数据库版本与当前应用匹配。")
+
+    st.subheader("数据完整性")
+    current_integrity = integrity_check(store)
+    st.write(f"SQLite integrity_check：`{current_integrity}`")
+    counts = collect_table_counts(store)
+    st.dataframe(
+        pd.DataFrame([{"table": table, "count": count} for table, count in counts.items()]),
+        use_container_width=True,
+    )
+
+    st.subheader("手动备份")
+    st.write("备份会复制数据库、错题图片目录和资料目录，并生成 manifest.json。")
+    if st.button("立即创建备份"):
+        backup_dir = create_backup(store, reason="manual_backup")
+        st.success(f"已创建备份：{backup_dir}")
+
+    st.subheader("迁移记录")
+    migrations = list_applied_migrations(store)
+    if migrations:
+        st.dataframe(pd.DataFrame(migrations), use_container_width=True)
+    else:
+        st.info("暂无迁移记录。")
+
+    st.subheader("最近备份")
+    backups = list_backups()
+    if backups:
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "backup_time": row.get("backup_time", ""),
+                        "reason": row.get("reason", ""),
+                        "integrity": row.get("integrity", ""),
+                        "path": row.get("path", ""),
+                    }
+                    for row in backups
+                ]
+            ),
+            use_container_width=True,
+        )
+    else:
+        st.info("还没有备份。")
 
 
 if __name__ == "__main__":

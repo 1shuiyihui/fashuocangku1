@@ -9,6 +9,7 @@ def test_app_exposes_expected_pages():
         "模板管理",
         "薄弱点分析",
         "周度/月度复盘",
+        "系统与备份",
     ]
     assert callable(app.main)
 
