@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import importlib
 import json
 from pathlib import Path
 from sqlite3 import IntegrityError
@@ -66,6 +67,11 @@ APP_GUIDE_STEPS = [
     "进入苏格拉底训练，用追问暴露真实薄弱处。",
     "每周或每月查看复盘，按高频考点和错因安排下一轮训练。",
 ]
+ENTRY_WORKFLOW_STEPS = ["上传或拍照", "结构化训练点", "AI 抽取与确认"]
+KNOWLEDGE_WORKFLOW_STEPS = ["上传并建立索引", "检索资料片段", "生成可执行训练计划", "导入为训练点"]
+TRAINING_PANEL_SECTIONS = ["模板提示", "参考资料片段", "掌握度评估", "本次训练记录"]
+SIDEBAR_STATUS_TITLE = "系统状态"
+SIDEBAR_WORKFLOW_TITLE = "学习闭环"
 APP_SHELL_STYLE = """
 <style>
 html, body, [data-testid="stAppViewContainer"] {
@@ -74,6 +80,9 @@ html, body, [data-testid="stAppViewContainer"] {
 [data-testid="stSidebar"] {
     background: #f7f8fb;
     border-right: 1px solid #e5e7ef;
+}
+[data-testid="stSidebar"] > div:first-child {
+    padding-top: 24px;
 }
 [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
     color: #4b5563;
@@ -109,11 +118,15 @@ html, body, [data-testid="stAppViewContainer"] {
     padding-bottom: 3rem;
 }
 .sidebar-brand {
-    padding: 8px 2px 16px;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+    border: 1px solid #e5e7ef;
+    border-radius: 8px;
+    margin: 0 0 12px;
+    padding: 14px 14px 15px;
 }
 .sidebar-brand-title {
     color: #111827;
-    font-size: 20px;
+    font-size: 19px;
     font-weight: 750;
     line-height: 1.2;
 }
@@ -121,6 +134,70 @@ html, body, [data-testid="stAppViewContainer"] {
     color: #6b7280;
     font-size: 12px;
     margin-top: 4px;
+}
+.sidebar-status-card,
+.sidebar-workflow-card {
+    background: #ffffff;
+    border: 1px solid #e5e7ef;
+    border-radius: 8px;
+    margin: 10px 0 14px;
+    padding: 12px 13px;
+}
+.sidebar-card-title {
+    color: #111827;
+    font-size: 13px;
+    font-weight: 760;
+    margin-bottom: 8px;
+}
+.sidebar-status-row {
+    align-items: center;
+    border-top: 1px solid #eef0f5;
+    color: #4b5563;
+    display: flex;
+    font-size: 12px;
+    justify-content: space-between;
+    padding: 8px 0 0;
+    margin-top: 7px;
+}
+.sidebar-status-row:first-of-type {
+    border-top: 0;
+    margin-top: 0;
+    padding-top: 0;
+}
+.sidebar-status-value {
+    color: #1d4ed8;
+    font-weight: 760;
+    text-align: right;
+}
+.sidebar-flow-list {
+    counter-reset: sidebarFlow;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+.sidebar-flow-list li {
+    color: #4b5563;
+    font-size: 12px;
+    line-height: 1.55;
+    margin: 7px 0;
+    padding-left: 24px;
+    position: relative;
+}
+.sidebar-flow-list li::before {
+    background: #eaf2ff;
+    border-radius: 999px;
+    color: #1d4ed8;
+    content: counter(sidebarFlow);
+    counter-increment: sidebarFlow;
+    font-size: 11px;
+    font-weight: 760;
+    height: 17px;
+    left: 0;
+    line-height: 17px;
+    position: absolute;
+    text-align: center;
+    top: 1px;
+    width: 17px;
 }
 .sidebar-group-title {
     color: #8a94a6;
@@ -184,6 +261,9 @@ html, body, [data-testid="stAppViewContainer"] {
     gap: 14px;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     margin: 8px 0 18px;
+}
+.kpi-grid-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 .workbench-card {
     background: #ffffff;
@@ -305,6 +385,205 @@ html, body, [data-testid="stAppViewContainer"] {
     background: #fff7ed;
     color: #c2410c;
 }
+.chip-gray {
+    background: #f3f4f6;
+    color: #4b5563;
+}
+.process-strip {
+    background: #ffffff;
+    border: 1px solid #e5e7ef;
+    border-radius: 8px;
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin: 8px 0 16px;
+    padding: 12px;
+}
+.process-strip-four {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.process-step {
+    background: #f8fafc;
+    border: 1px solid #eef2f7;
+    border-radius: 8px;
+    padding: 12px 13px;
+}
+.process-step-index {
+    color: #2563eb;
+    font-size: 12px;
+    font-weight: 760;
+    margin-bottom: 3px;
+}
+.process-step-title {
+    color: #111827;
+    font-size: 14px;
+    font-weight: 760;
+}
+.section-panel {
+    background: #ffffff;
+    border: 1px solid #e5e7ef;
+    border-radius: 8px;
+    margin: 10px 0 16px;
+    padding: 16px;
+}
+.section-panel-soft {
+    background: #f8fafc;
+}
+.section-panel-title {
+    color: #111827;
+    font-size: 16px;
+    font-weight: 760;
+    margin-bottom: 5px;
+}
+.section-panel-subtitle {
+    color: #6b7280;
+    font-size: 13px;
+    line-height: 1.55;
+    margin-bottom: 12px;
+}
+.entry-workspace-grid {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: 1fr 1.4fr 1fr;
+    margin: 8px 0 18px;
+}
+.entry-ai-card,
+.training-control-card,
+.source-result-card,
+.lesson-plan-card,
+.document-list-card {
+    background: #ffffff;
+    border: 1px solid #e5e7ef;
+    border-radius: 8px;
+    padding: 14px 15px;
+}
+.entry-ai-row {
+    align-items: center;
+    border-bottom: 1px solid #eef0f5;
+    display: flex;
+    gap: 10px;
+    justify-content: space-between;
+    padding: 9px 0;
+}
+.entry-ai-row:last-child {
+    border-bottom: 0;
+}
+.entry-ai-label,
+.source-result-meta,
+.lesson-meta {
+    color: #6b7280;
+    font-size: 12px;
+}
+.entry-ai-value,
+.source-result-title,
+.lesson-plan-title {
+    color: #111827;
+    font-weight: 760;
+}
+.training-cockpit-grid {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: minmax(0, 1.7fr) minmax(320px, .8fr);
+    margin: 10px 0 18px;
+}
+.training-context-bar {
+    background: #ffffff;
+    border: 1px solid #e5e7ef;
+    border-radius: 8px;
+    display: grid;
+    gap: 12px;
+    grid-template-columns: 1.2fr 1fr 1.2fr .75fr;
+    margin: 8px 0 18px;
+    padding: 14px 16px;
+}
+.training-context-item {
+    border-right: 1px solid #eef0f5;
+    padding-right: 12px;
+}
+.training-context-item:last-child {
+    border-right: 0;
+}
+.training-context-label {
+    color: #6b7280;
+    font-size: 12px;
+    margin-bottom: 4px;
+}
+.training-context-value {
+    color: #111827;
+    font-size: 15px;
+    font-weight: 760;
+}
+.chat-shell {
+    background: #ffffff;
+    border: 1px solid #e5e7ef;
+    border-radius: 8px;
+    min-height: 420px;
+    padding: 14px 16px;
+}
+.training-timeline {
+    background: #ffffff;
+    border: 1px solid #e5e7ef;
+    border-radius: 8px;
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin: 10px 0 18px;
+    padding: 12px;
+}
+.timeline-node {
+    background: #f8fafc;
+    border: 1px solid #eef2f7;
+    border-radius: 8px;
+    padding: 11px 12px;
+}
+.knowledge-workflow-grid {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: minmax(280px, 1fr) minmax(320px, 1.1fr) minmax(320px, 1fr);
+    margin: 10px 0 18px;
+}
+.document-row,
+.source-result-card {
+    margin: 8px 0;
+}
+.document-row {
+    align-items: center;
+    background: #f8fafc;
+    border: 1px solid #eef2f7;
+    border-radius: 8px;
+    display: flex;
+    gap: 10px;
+    justify-content: space-between;
+    padding: 10px 12px;
+}
+.document-title {
+    color: #111827;
+    font-weight: 720;
+}
+.document-meta {
+    color: #6b7280;
+    font-size: 12px;
+    margin-top: 3px;
+}
+.source-result-card {
+    background: #f8fafc;
+}
+.lesson-plan-grid {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin: 10px 0 18px;
+}
+.lesson-plan-card {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+}
+.lesson-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
 .loop-card-grid {
     display: grid;
     gap: 14px;
@@ -386,11 +665,19 @@ div[data-testid="stExpander"] {
     .app-topbar-status {
         justify-content: flex-start;
     }
-    .workbench-grid {
+    .workbench-grid,
+    .kpi-grid-4 {
         grid-template-columns: 1fr;
     }
     .loop-steps,
-    .loop-card-grid {
+    .loop-card-grid,
+    .process-strip,
+    .knowledge-workflow-grid,
+    .entry-workspace-grid,
+    .training-cockpit-grid,
+    .training-context-bar,
+    .training-timeline,
+    .lesson-plan-grid {
         grid-template-columns: 1fr;
     }
     .workflow-row {
@@ -488,6 +775,15 @@ def escape_html(value: object) -> str:
     return html.escape(str(value), quote=True)
 
 
+def get_app_version() -> str:
+    try:
+        import services.versioning as versioning_module
+
+        return str(importlib.reload(versioning_module).APP_VERSION)
+    except Exception:
+        return APP_VERSION
+
+
 @st.cache_resource
 def get_storage() -> Storage:
     cloud_config = get_persistence_config()
@@ -495,7 +791,7 @@ def get_storage() -> Storage:
     if cloud_config.enabled:
         try:
             validate_cloud_sync_config(cloud_config)
-            cloud_sync = GitHubSnapshotSync(cloud_config, app_version=APP_VERSION)
+            cloud_sync = GitHubSnapshotSync(cloud_config, app_version=get_app_version())
             cloud_sync.restore(DATA_ROOT)
         except CloudSyncError as exc:
             st.error(f"云端数据恢复失败：{exc}")
@@ -507,7 +803,7 @@ def get_storage() -> Storage:
     store = Storage()
     store.init_db()
     try:
-        apply_migrations(store, reason=f"startup_{APP_VERSION}")
+        apply_migrations(store, reason=f"startup_{get_app_version()}")
     except SchemaTooNewError as exc:
         st.error(str(exc))
         st.stop()
@@ -579,6 +875,158 @@ def render_global_style() -> None:
     st.markdown(APP_SHELL_STYLE, unsafe_allow_html=True)
 
 
+def render_process_steps(steps: list[str], columns: int = 3) -> None:
+    extra_class = " process-strip-four" if columns == 4 else ""
+    items = "".join(
+        f"""
+<div class="process-step">
+  <div class="process-step-index">Step {index}</div>
+  <div class="process-step-title">{escape_html(step)}</div>
+</div>
+"""
+        for index, step in enumerate(steps, start=1)
+    )
+    st.markdown(f'<div class="process-strip{extra_class}">{items}</div>', unsafe_allow_html=True)
+
+
+def render_panel_intro(title: str, subtitle: str = "") -> None:
+    st.markdown(
+        f"""
+<div class="section-panel section-panel-soft">
+  <div class="section-panel-title">{escape_html(title)}</div>
+  <div class="section-panel-subtitle">{escape_html(subtitle)}</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def render_kpi_cards(cards: list[tuple[str, object, str]]) -> None:
+    items = "".join(
+        f"""
+<div class="workbench-card">
+  <div class="workbench-card-label">{escape_html(label)}</div>
+  <div class="workbench-card-value">{escape_html(value)}</div>
+  <div class="workflow-muted">{escape_html(caption)}</div>
+</div>
+"""
+        for label, value, caption in cards
+    )
+    grid_class = "workbench-grid kpi-grid-4" if len(cards) == 4 else "workbench-grid"
+    st.markdown(f'<div class="{grid_class}">{items}</div>', unsafe_allow_html=True)
+
+
+def render_document_cards(documents: list[dict[str, object]]) -> None:
+    if not documents:
+        st.caption("还没有上传资料。")
+        return
+    rows = "".join(
+        f"""
+<div class="document-row">
+  <div>
+    <div class="document-title">{escape_html(row.get("filename", ""))}</div>
+    <div class="document-meta">#{escape_html(row.get("id", ""))} · {escape_html(row.get("status", ""))} · {escape_html(row.get("created_at", ""))}</div>
+  </div>
+  <span class="chip {document_status_class(row.get("status"))}">{escape_html(document_status_label(row.get("status")))}</span>
+</div>
+"""
+        for row in documents[:6]
+    )
+    st.markdown(f'<div class="document-list-card">{rows}</div>', unsafe_allow_html=True)
+
+
+def document_status_label(status: object) -> str:
+    labels = {
+        "ready": "已完成",
+        "uploaded": "待处理",
+        "processing": "处理中",
+        "error": "失败",
+    }
+    return labels.get(str(status), str(status or "未知"))
+
+
+def document_status_class(status: object) -> str:
+    if str(status) == "ready":
+        return "chip-green"
+    if str(status) == "error":
+        return "chip-amber"
+    return "chip-blue"
+
+
+def render_source_result_cards(results: list[dict[str, object]]) -> None:
+    if not results:
+        st.info("没有检索到资料片段。请先上传资料，或换一个更具体的考点。")
+        return
+    for result in results:
+        score = result.get("score", 0)
+        try:
+            score_text = f"{float(score):.3f}"
+        except (TypeError, ValueError):
+            score_text = str(score)
+        st.markdown(
+            f"""
+<div class="source-result-card">
+  <div class="source-result-title">{escape_html(result.get("source_label", ""))}</div>
+  <div class="source-result-meta">相关度 {escape_html(score_text)}</div>
+  <div class="section-panel-subtitle">{escape_html(result.get("content", ""))}</div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
+
+def render_lesson_plan_card(lesson: dict[str, object]) -> None:
+    chips = "".join(
+        f'<span class="chip chip-blue">{escape_html(point)}</span>'
+        for point in lesson.get("knowledge_points", [])[:4]
+    )
+    risks = "".join(
+        f'<span class="chip chip-amber">{escape_html(risk)}</span>'
+        for risk in lesson.get("mistake_risks", [])[:3]
+    )
+    st.markdown(
+        f"""
+<div class="lesson-plan-card">
+  <div class="lesson-meta">第 {escape_html(lesson.get("lesson_index", ""))} 课</div>
+  <div class="lesson-plan-title">{escape_html(lesson.get("title", ""))}</div>
+  <div class="section-panel-subtitle">{escape_html(lesson.get("objective", ""))}</div>
+  <div class="lesson-chip-row">{chips}</div>
+  <div class="lesson-chip-row">{risks}</div>
+  <div class="lesson-meta">模板：{escape_html(lesson.get("recommended_template", ""))}</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def render_sidebar_status(ai_status: str, persistence_status: str) -> None:
+    app_version = get_app_version()
+    st.sidebar.markdown(
+        f"""
+<div class="sidebar-status-card">
+  <div class="sidebar-card-title">{SIDEBAR_STATUS_TITLE}</div>
+  <div class="sidebar-status-row"><span>应用版本</span><span class="sidebar-status-value">v{escape_html(app_version)}</span></div>
+  <div class="sidebar-status-row"><span>大模型</span><span class="sidebar-status-value">{escape_html(ai_status)}</span></div>
+  <div class="sidebar-status-row"><span>数据保存</span><span class="sidebar-status-value">{escape_html(persistence_status)}</span></div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def render_sidebar_workflow() -> None:
+    items = "".join(f"<li>{escape_html(step)}</li>" for step in WORKFLOW_LOOP_STEPS)
+    st.sidebar.markdown(
+        f"""
+<div class="sidebar-workflow-card">
+  <div class="sidebar-card-title">{SIDEBAR_WORKFLOW_TITLE}</div>
+  <ol class="sidebar-flow-list">{items}</ol>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
 def main() -> None:
     st.set_page_config(page_title="法硕苏格拉底学习器", layout="wide")
     render_global_style()
@@ -606,21 +1054,26 @@ def main() -> None:
 
 def render_sidebar() -> str:
     ai_defaults = get_default_ai_config()
+    api_key = st.session_state.get("api_key", ai_defaults["api_key"])
+    ai_status = get_ai_status_label({"api_key": str(api_key or "")})
+    persistence_status = get_persistence_status_label()
     st.sidebar.markdown(
         f"""
 <div class="sidebar-brand">
   <div class="sidebar-brand-title">法硕知识助手</div>
-  <div class="sidebar-brand-subtitle">Socratic workbench · v{APP_VERSION}</div>
+  <div class="sidebar-brand-subtitle">苏格拉底式学习工作台</div>
 </div>
 """,
         unsafe_allow_html=True,
     )
+    render_sidebar_status(ai_status, persistence_status)
+    render_sidebar_workflow()
     st.session_state["beginner_mode"] = st.sidebar.checkbox(
         "新手模式",
         value=st.session_state.get("beginner_mode", BEGINNER_MODE_DEFAULT),
         help="默认隐藏提示词编辑等高级选项；需要细调模板时可以关闭。",
     )
-    st.sidebar.caption("推荐顺序：录入薄弱点 → 苏格拉底训练 → 周度/月度复盘")
+    st.sidebar.caption("优先顺序：先录入训练点，再训练和复盘。")
     with st.sidebar.expander(
         "AI 配置",
         expanded=not st.session_state["beginner_mode"],
@@ -655,10 +1108,13 @@ def render_sidebar() -> str:
                 current_page = nav_page
                 st.session_state["current_page"] = nav_page
                 st.rerun()
+            if nav_page == current_page:
+                st.sidebar.caption(PAGE_SUBTITLES.get(nav_page, ""))
     return current_page
 
 
 def render_workspace_header(page: str) -> None:
+    app_version = get_app_version()
     defaults = get_default_ai_config()
     api_key = st.session_state.get("api_key", defaults["api_key"])
     ai_status = get_ai_status_label({"api_key": str(api_key or "")})
@@ -677,7 +1133,7 @@ def render_workspace_header(page: str) -> None:
     <p>{escape_html(subtitle)}</p>
   </div>
   <div class="app-topbar-status">
-    <span class="status-pill">v{escape_html(APP_VERSION)}</span>
+    <span class="status-pill">v{escape_html(app_version)}</span>
     <span class="{status_class}">{escape_html(ai_status)}</span>
     <span class="{persistence_class}">{escape_html(persistence_status)}</span>
   </div>
@@ -913,42 +1369,73 @@ def render_beginner_guide() -> None:
 
 
 def page_entry(store: Storage) -> None:
-    st.caption("第一次录入只填核心字段即可；照片、题干和参考答案都可以后补。")
+    render_panel_intro(
+        "从实体书错题到可训练点",
+        "第一次只需要补齐科目、题型、考点、错因和掌握度；照片、题干和答案可以作为后续追问依据。",
+    )
+    render_process_steps(ENTRY_WORKFLOW_STEPS)
     with st.form("weak_point_form", clear_on_submit=True):
-        uploaded_file = st.file_uploader(
-            "错题照片",
-            type=["png", "jpg", "jpeg", "webp"],
-            help="实体书拍照即可；第一版先做留档，不强制 OCR。",
-        )
-        subject = st.selectbox("科目", SUBJECTS, help="不知道归类时，先按你做题册所在科目选。")
-        question_type = st.selectbox("题型", QUESTION_TYPES)
-        knowledge_point = st.text_input(
-            "考点",
-            placeholder="例如：共同犯罪、表见代理、宪法监督",
-            help="写一个短考点名即可，不用复制完整题干。",
-        )
-        mistake_reason = st.selectbox(
-            "错因",
-            MISTAKE_REASONS,
-            help="不确定就选最接近的，后续训练会继续暴露真正问题。",
-        )
-        mastery_level = st.selectbox(
-            "掌握度",
-            MASTERY_LEVELS,
-            help="按直觉选：看见就不会是陌生，说不清是模糊，能做但不稳是基本会。",
-        )
-        question_text = st.text_area(
-            "题干，可选",
-            height=120,
-            placeholder="可以先空着；后面需要案例分析时再补。",
-        )
-        reference_answer = st.text_area(
-            "参考答案，可选",
-            height=120,
-            placeholder="可以粘贴答案或写采分点。",
-        )
-        notes = st.text_area("备注，可选", height=80, placeholder="例如：书名、页码、题号。")
-        submitted = st.form_submit_button("保存薄弱点")
+        source_col, structure_col, ai_col = st.columns([1, 1.35, 1])
+        with source_col:
+            with st.container(border=True):
+                st.markdown("**来源材料**")
+                st.caption("拍照或上传文件后，先留档；后续可接入 OCR 自动抽取。")
+                uploaded_file = st.file_uploader(
+                    "错题照片",
+                    type=["png", "jpg", "jpeg", "webp"],
+                    help="实体书拍照即可；第一版先做留档，不强制 OCR。",
+                )
+                st.caption("建议拍清楚题干、选项、页码和答案区。")
+        with structure_col:
+            with st.container(border=True):
+                st.markdown("**结构化训练点**")
+                subject = st.selectbox("科目", SUBJECTS, help="不知道归类时，先按你做题册所在科目选。")
+                question_type = st.selectbox("题型", QUESTION_TYPES)
+                knowledge_point = st.text_input(
+                    "考点",
+                    placeholder="例如：共同犯罪、表见代理、宪法监督",
+                    help="写一个短考点名即可，不用复制完整题干。",
+                )
+                mistake_reason = st.selectbox(
+                    "错因",
+                    MISTAKE_REASONS,
+                    help="不确定就选最接近的，后续训练会继续暴露真正问题。",
+                )
+                mastery_level = st.selectbox(
+                    "掌握度",
+                    MASTERY_LEVELS,
+                    help="按直觉选：看见就不会是陌生，说不清是模糊，能做但不稳是基本会。",
+                )
+        with ai_col:
+            st.markdown(
+                f"""
+<div class="entry-ai-card">
+  <div class="section-panel-title">AI 抽取与下一步</div>
+  <div class="section-panel-subtitle">当前版本先用你填写的字段形成训练点；后续接入拍照 OCR 后会在这里展示候选抽取结果。</div>
+  <div class="entry-ai-row"><span class="entry-ai-label">保存后</span><span class="entry-ai-value">进入训练点池</span></div>
+  <div class="entry-ai-row"><span class="entry-ai-label">建议动作</span><span class="entry-ai-value">立即苏格拉底追问</span></div>
+  <div class="entry-ai-row"><span class="entry-ai-label">复盘依据</span><span class="entry-ai-value">错因 + 掌握度</span></div>
+</div>
+""",
+                unsafe_allow_html=True,
+            )
+
+        detail_col, answer_col, note_col = st.columns(3)
+        with detail_col:
+            question_text = st.text_area(
+                "题干，可选",
+                height=120,
+                placeholder="可以先空着；后面需要案例分析时再补。",
+            )
+        with answer_col:
+            reference_answer = st.text_area(
+                "参考答案，可选",
+                height=120,
+                placeholder="可以粘贴答案或写采分点。",
+            )
+        with note_col:
+            notes = st.text_area("备注，可选", height=120, placeholder="例如：书名、页码、题号。")
+        submitted = st.form_submit_button("保存训练点", type="primary")
 
     if submitted:
         if not knowledge_point.strip():
@@ -968,7 +1455,14 @@ def page_entry(store: Storage) -> None:
                 "notes": notes,
             }
         )
-        st.success(f"已保存薄弱点 #{weak_point_id}")
+        st.session_state[FOCUS_WEAK_POINT_KEY] = weak_point_id
+        st.session_state["last_saved_weak_point_id"] = weak_point_id
+        st.success(f"已保存训练点 #{weak_point_id}")
+
+    last_saved_id = st.session_state.get("last_saved_weak_point_id")
+    if last_saved_id:
+        if st.button("进入苏格拉底训练", type="primary"):
+            route_to_training(int(last_saved_id))
 
     st.subheader("最近录入")
     recent = store.list_weak_points()[:10]
@@ -983,21 +1477,52 @@ def page_training(store: Storage) -> None:
     beginner_mode = st.session_state.get("beginner_mode", BEGINNER_MODE_DEFAULT)
     weak_points = store.list_weak_points()
     templates = store.list_templates()
+    render_panel_intro(
+        "围绕一个训练点连续追问",
+        "先固定训练对象和追问模板，再通过多轮回答暴露真正薄弱处。",
+    )
     if not weak_points:
-        st.info("请先去「错题/薄弱点录入」保存一个考点。只填科目、题型、考点、错因和掌握度即可。")
+        st.info("请先去「错题/薄弱点录入」保存一个训练点。只填科目、题型、考点、错因和掌握度即可。")
+        st.markdown(
+            """
+<div class="training-control-card">
+  <div class="section-panel-title">训练控制台</div>
+  <div class="section-panel-subtitle">保存训练点后，这里会显示模板提示、参考资料、掌握度评估和训练记录。</div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
         return
     if not templates:
         st.warning("没有启用中的模板，请先在模板管理中启用模板。")
         return
 
-    weak_point = st.selectbox(
-        "选择薄弱点",
-        weak_points,
-        index=get_focused_weak_point_index(weak_points, st.session_state.get(FOCUS_WEAK_POINT_KEY)),
-        format_func=lambda row: f"{row['subject']}｜{row['knowledge_point']}｜{row['mastery_level']}",
-    )
-    template = st.selectbox("选择追问模板", templates, format_func=lambda row: row["name"])
-    student_goal = st.text_input("本次训练目标", value=template["default_goal"])
+    setup_col, control_col = st.columns([1.45, 1])
+    with setup_col:
+        weak_point = st.selectbox(
+            "选择训练点",
+            weak_points,
+            index=get_focused_weak_point_index(weak_points, st.session_state.get(FOCUS_WEAK_POINT_KEY)),
+            format_func=lambda row: f"{row['subject']}｜{row['knowledge_point']}｜{row['mastery_level']}",
+        )
+        template = st.selectbox("选择追问模板", templates, format_func=lambda row: row["name"])
+        student_goal = st.text_input("本次训练目标", value=template["default_goal"])
+    with control_col:
+        st.markdown(
+            f"""
+<div class="training-control-card">
+  <div class="section-panel-title">训练控制台</div>
+  <div class="section-panel-subtitle">本页只围绕当前训练点推进，不混入其它错题。</div>
+  <div class="lesson-chip-row">
+    <span class="chip chip-blue">{escape_html(weak_point["subject"])}</span>
+    <span class="chip chip-amber">{escape_html(weak_point["mastery_level"])}</span>
+    <span class="chip chip-gray">{escape_html(weak_point["mistake_reason"])}</span>
+  </div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
     advanced_enabled = st.checkbox(
         "我要临时修改本次提示词",
         value=not beginner_mode,
@@ -1017,9 +1542,6 @@ def page_training(store: Storage) -> None:
         top_k=4,
     )
     source_context = format_rag_context(rag_results)
-    if source_context:
-        with st.expander("本次训练会参考的资料片段"):
-            st.text(source_context)
     prompt_snapshot = build_training_prompt(
         weak_point=weak_point,
         template=template,
@@ -1029,8 +1551,37 @@ def page_training(store: Storage) -> None:
         source_context=source_context,
     )
 
-    with st.expander("预览本次完整提示词"):
-        st.code(prompt_snapshot)
+    st.markdown(
+        f"""
+<div class="training-context-bar">
+  <div class="training-context-item">
+    <div class="training-context-label">当前训练点</div>
+    <div class="training-context-value">{escape_html(weak_point["subject"])}｜{escape_html(weak_point["knowledge_point"])}</div>
+  </div>
+  <div class="training-context-item">
+    <div class="training-context-label">追问模板</div>
+    <div class="training-context-value">{escape_html(template["name"])}</div>
+  </div>
+  <div class="training-context-item">
+    <div class="training-context-label">当前目标</div>
+    <div class="training-context-value">{escape_html(student_goal)}</div>
+  </div>
+  <div class="training-context-item">
+    <div class="training-context-label">掌握度</div>
+    <div class="training-context-value">{escape_html(weak_point["mastery_level"])}</div>
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+    preview_col, source_col = st.columns(2)
+    with preview_col:
+        with st.expander(TRAINING_PANEL_SECTIONS[0]):
+            st.code(prompt_snapshot)
+    with source_col:
+        with st.expander(TRAINING_PANEL_SECTIONS[1]):
+            st.text(source_context or "暂无匹配资料片段。训练会优先依据你录入的题干、答案和错因。")
 
     if save_as.strip() and st.button("保存本次提示词为新模板"):
         try:
@@ -1052,7 +1603,7 @@ def page_training(store: Storage) -> None:
     if "active_session_id" not in st.session_state:
         st.session_state["active_session_id"] = None
 
-    if st.button("开始训练"):
+    if st.button("开始训练", type="primary"):
         session_id = store.create_session(
             weak_point_id=weak_point["id"],
             template_id=template["id"],
@@ -1074,12 +1625,34 @@ def page_training(store: Storage) -> None:
     if not session_id:
         return
 
-    st.divider()
-    st.subheader(f"当前训练 #{session_id}")
     messages = store.list_messages(session_id)
-    for message in messages:
-        with st.chat_message(message["role"]):
-            st.write(message["content"])
+    chat_col, panel_col = st.columns([1.55, 1])
+    with chat_col:
+        st.subheader(f"当前训练 #{session_id}")
+        with st.container(border=True):
+            if messages:
+                for message in messages:
+                    with st.chat_message(message["role"]):
+                        st.write(message["content"])
+            else:
+                st.caption("训练已创建，等待 AI 首轮追问。")
+    with panel_col:
+        with st.container(border=True):
+            st.markdown(f"**{TRAINING_PANEL_SECTIONS[2]}**")
+            st.caption(f"训练前：{weak_point['mastery_level']}｜错因：{weak_point['mistake_reason']}")
+            st.markdown(f"**{TRAINING_PANEL_SECTIONS[3]}**")
+            st.caption(f"已记录消息：{len(messages)} 条")
+            st.markdown(
+                """
+<div class="training-timeline">
+  <div class="timeline-node"><b>开始</b><br><span class="workflow-muted">选择训练点</span></div>
+  <div class="timeline-node"><b>追问</b><br><span class="workflow-muted">暴露漏洞</span></div>
+  <div class="timeline-node"><b>修正</b><br><span class="workflow-muted">补齐表达</span></div>
+  <div class="timeline-node"><b>复盘</b><br><span class="workflow-muted">保存结论</span></div>
+</div>
+""",
+                unsafe_allow_html=True,
+            )
 
     user_input = st.chat_input("回答上一个问题")
     if user_input:
@@ -1100,11 +1673,18 @@ def page_training(store: Storage) -> None:
             st.error(f"AI 调用失败：{exc}")
 
     with st.form("finish_session_form"):
-        mastery_after = st.selectbox("训练后掌握度", MASTERY_LEVELS, index=2)
-        summary = st.text_area("训练总结", height=80)
-        exposed_issues = st.text_area("暴露问题", height=80)
-        next_review_suggestion = st.text_area("下次复习建议", height=80)
-        finish = st.form_submit_button("结束训练")
+        st.markdown("**保存复盘**")
+        finish_col1, finish_col2 = st.columns([1, 2])
+        with finish_col1:
+            mastery_after = st.selectbox("训练后掌握度", MASTERY_LEVELS, index=2)
+        with finish_col2:
+            summary = st.text_area("训练总结", height=80)
+        issue_col, next_col = st.columns(2)
+        with issue_col:
+            exposed_issues = st.text_area("暴露问题", height=80)
+        with next_col:
+            next_review_suggestion = st.text_area("下次复习建议", height=80)
+        finish = st.form_submit_button("结束训练并保存复盘", type="primary")
     if finish:
         store.finish_session(
             session_id,
@@ -1118,162 +1698,171 @@ def page_training(store: Storage) -> None:
 
 
 def page_knowledge_base(store: Storage) -> None:
-    st.caption("上传讲义、真题解析或笔记后，系统会本地抽取文本、建立检索索引，并可用大模型生成后续课程。")
-
     documents = store.list_documents()
     chunks = store.list_document_chunks()
     courses = store.list_courses()
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("资料", len(documents))
-    col2.metric("文本片段", len(chunks))
-    col3.metric("生成课程", len(courses))
-
-    st.subheader("1. 上传并处理资料")
-    with st.form("document_upload_form", clear_on_submit=True):
-        uploaded_file = st.file_uploader(
-            "上传 PDF、图片、TXT 或 Markdown",
-            type=["pdf", "png", "jpg", "jpeg", "webp", "txt", "md", "markdown"],
-            help="PDF 会优先直接抽文字；图片会尝试用本地 Tesseract OCR。",
+    imported_lesson_count = 0
+    for course in courses:
+        imported_lesson_count += sum(
+            1 for lesson in store.list_course_lessons(course["id"]) if lesson["imported_weak_point_id"]
         )
-        submitted = st.form_submit_button("上传并建立索引")
 
-    if submitted:
-        if uploaded_file is None:
-            st.error("请先选择一个文件。")
-        else:
-            path = store.save_document_upload(uploaded_file)
-            document_id = store.create_document(
-                {
-                    "filename": uploaded_file.name,
-                    "file_type": "." + uploaded_file.name.split(".")[-1].lower(),
-                    "file_path": path,
-                    "status": "uploaded",
-                }
-            )
-            try:
-                text, text_chunks, status = process_document_file(path)
-                store.update_document_processing(document_id, text, status)
-                store.replace_document_chunks(
-                    document_id,
-                    [
-                        {
-                            "content": chunk,
-                            "source_label": f"{uploaded_file.name}#{index}",
-                        }
-                        for index, chunk in enumerate(text_chunks, start=1)
-                    ],
+    render_panel_intro(
+        "资料驱动训练计划",
+        "上传资料后先建立本地索引，再检索关键片段，最后生成可执行训练计划并导入为训练点。",
+    )
+    render_kpi_cards(
+        [
+            ("资料", len(documents), "已上传文件"),
+            ("文本片段", len(chunks), "可检索 RAG 片段"),
+            ("训练计划", len(courses), "已生成课程"),
+            ("已导入", imported_lesson_count, "课程小节转训练点"),
+        ]
+    )
+    render_process_steps(KNOWLEDGE_WORKFLOW_STEPS, columns=4)
+
+    upload_col, search_col, generate_col = st.columns([1, 1.1, 1])
+    with upload_col:
+        with st.container(border=True):
+            st.markdown("**1. 上传并建立索引**")
+            st.caption("支持 PDF、图片、TXT、Markdown；图片会尝试本地 OCR。")
+            with st.form("document_upload_form", clear_on_submit=True):
+                uploaded_file = st.file_uploader(
+                    "上传 PDF、图片、TXT 或 Markdown",
+                    type=["pdf", "png", "jpg", "jpeg", "webp", "txt", "md", "markdown"],
+                    help="PDF 会优先直接抽文字；图片会尝试用本地 Tesseract OCR。",
                 )
-                if text_chunks:
-                    st.success(f"已处理 {uploaded_file.name}，生成 {len(text_chunks)} 个检索片段。")
+                submitted = st.form_submit_button("上传并建立索引", type="primary")
+
+            if submitted:
+                if uploaded_file is None:
+                    st.error("请先选择一个文件。")
                 else:
-                    st.warning("文件已保存，但没有抽取到有效文本。扫描版 PDF 可以先转成图片再上传 OCR。")
-            except OCRUnavailableError as exc:
-                store.update_document_processing(document_id, "", "error", str(exc))
-                st.error(str(exc))
-            except UnsupportedDocumentError as exc:
-                store.update_document_processing(document_id, "", "error", str(exc))
-                st.error(str(exc))
-            except Exception as exc:
-                store.update_document_processing(document_id, "", "error", str(exc))
-                st.error(f"处理失败：{exc}")
+                    path = store.save_document_upload(uploaded_file)
+                    document_id = store.create_document(
+                        {
+                            "filename": uploaded_file.name,
+                            "file_type": "." + uploaded_file.name.split(".")[-1].lower(),
+                            "file_path": path,
+                            "status": "uploaded",
+                        }
+                    )
+                    try:
+                        text, text_chunks, status = process_document_file(path)
+                        store.update_document_processing(document_id, text, status)
+                        store.replace_document_chunks(
+                            document_id,
+                            [
+                                {
+                                    "content": chunk,
+                                    "source_label": f"{uploaded_file.name}#{index}",
+                                }
+                                for index, chunk in enumerate(text_chunks, start=1)
+                            ],
+                        )
+                        if text_chunks:
+                            st.success(f"已处理 {uploaded_file.name}，生成 {len(text_chunks)} 个检索片段。")
+                        else:
+                            st.warning("文件已保存，但没有抽取到有效文本。扫描版 PDF 可以先转成图片再上传 OCR。")
+                    except OCRUnavailableError as exc:
+                        store.update_document_processing(document_id, "", "error", str(exc))
+                        st.error(str(exc))
+                    except UnsupportedDocumentError as exc:
+                        store.update_document_processing(document_id, "", "error", str(exc))
+                        st.error(str(exc))
+                    except Exception as exc:
+                        store.update_document_processing(document_id, "", "error", str(exc))
+                        st.error(f"处理失败：{exc}")
+            documents = store.list_documents()
+            render_document_cards(documents)
 
     documents = store.list_documents()
     chunks = store.list_document_chunks()
-    if documents:
-        with st.expander("已上传资料", expanded=False):
-            st.dataframe(
-                pd.DataFrame(
-                    [
-                        {
-                            "id": row["id"],
-                            "filename": row["filename"],
-                            "status": row["status"],
-                            "error": row["error_message"],
-                            "created_at": row["created_at"],
-                        }
-                        for row in documents
-                    ]
-                ),
-                use_container_width=True,
-            )
-
-    st.subheader("2. 检索资料片段")
-    query = st.text_input("输入要查的考点或问题", placeholder="例如：共同犯罪成立条件")
-    if st.button("检索资料"):
-        results = search_chunks(query, chunks, top_k=5)
-        store.create_rag_query(query, [int(result["id"]) for result in results])
-        if results:
-            st.write("命中的资料片段：")
-            for result in results:
-                st.markdown(f"**{result['source_label']}** ｜相关度 {result['score']:.3f}")
-                st.write(result["content"])
-        else:
-            st.info("没有检索到资料片段。请先上传资料，或换一个更具体的考点。")
-
-    st.subheader(COURSE_GENERATION_SECTION_TITLE)
-    ready_documents = [row for row in documents if row["status"] == "ready"]
-    if not ready_documents:
-        st.info("先上传并成功处理一份资料后，再生成课程。")
-    else:
-        selected_document = st.selectbox(
-            "选择课程来源资料",
-            ready_documents,
-            format_func=lambda row: f"#{row['id']} {row['filename']}",
-        )
-        course_goal = st.text_input("课程目标", value="围绕这份资料生成法硕考前可执行训练计划")
-        days = st.slider("复习周期（天）", min_value=3, max_value=30, value=7)
-        document_chunks = store.list_document_chunks(selected_document["id"])
-        source_results = search_chunks(course_goal, document_chunks, top_k=8) or document_chunks[:8]
-        source_context = format_rag_context(source_results, max_chars=5000)
-
-        with st.expander("生成课程将参考的资料片段"):
-            st.text(source_context or "暂无资料片段")
-
-        if st.button("调用大模型生成课程"):
-            if not source_context:
-                st.error("该资料没有可用文本片段，无法生成课程。")
+    with search_col:
+        with st.container(border=True):
+            st.markdown("**2. 检索资料片段**")
+            query = st.text_input("输入要查的考点或问题", placeholder="例如：共同犯罪成立条件")
+            if st.button("检索资料", key="knowledge_search_button"):
+                if not query.strip():
+                    st.error("请先输入考点或问题。")
+                else:
+                    results = search_chunks(query, chunks, top_k=5)
+                    store.create_rag_query(query, [int(result["id"]) for result in results])
+                    st.session_state["last_rag_query"] = query
+                    st.session_state["last_rag_results"] = results
+            last_results = st.session_state.get("last_rag_results", [])
+            if last_results:
+                st.caption(f"最近检索：{st.session_state.get('last_rag_query', '')}")
+                render_source_result_cards(last_results)
             else:
-                try:
-                    course = generate_course(get_ai_client(), source_context, course_goal, days)
-                    lessons = normalize_lessons(course)
-                    course_id = store.create_course(
-                        title=course["title"],
-                        source_document_id=selected_document["id"],
-                        raw_json=json.dumps(course, ensure_ascii=False),
-                        lessons=lessons,
-                    )
-                    st.success(f"已生成课程 #{course_id}：{course['title']}")
-                except AIConfigurationError as exc:
-                    st.warning(str(exc))
-                except CourseGenerationError as exc:
-                    st.error(str(exc))
-                except Exception as exc:
-                    st.error(f"生成失败：{exc}")
+                st.caption("检索结果会显示来源、相关度和可引用片段。")
+
+    ready_documents = [row for row in documents if row["status"] == "ready"]
+    with generate_col:
+        with st.container(border=True):
+            st.markdown(f"**{COURSE_GENERATION_SECTION_TITLE}**")
+            if not ready_documents:
+                st.info("先上传并成功处理一份资料后，再生成训练计划。")
+            else:
+                selected_document = st.selectbox(
+                    "选择课程来源资料",
+                    ready_documents,
+                    format_func=lambda row: f"#{row['id']} {row['filename']}",
+                )
+                course_goal = st.text_input("课程目标", value="围绕这份资料生成法硕考前可执行训练计划")
+                days = st.slider("复习周期（天）", min_value=3, max_value=30, value=7)
+                document_chunks = store.list_document_chunks(selected_document["id"])
+                source_results = search_chunks(course_goal, document_chunks, top_k=8) or document_chunks[:8]
+                source_context = format_rag_context(source_results, max_chars=5000)
+
+                with st.expander("生成训练计划将参考的资料片段"):
+                    st.text(source_context or "暂无资料片段")
+
+                if st.button("生成训练计划", type="primary"):
+                    if not source_context:
+                        st.error("该资料没有可用文本片段，无法生成训练计划。")
+                    else:
+                        try:
+                            course = generate_course(get_ai_client(), source_context, course_goal, days)
+                            lessons = normalize_lessons(course)
+                            course_id = store.create_course(
+                                title=course["title"],
+                                source_document_id=selected_document["id"],
+                                raw_json=json.dumps(course, ensure_ascii=False),
+                                lessons=lessons,
+                            )
+                            st.success(f"已生成训练计划 #{course_id}：{course['title']}")
+                        except AIConfigurationError as exc:
+                            st.warning(str(exc))
+                        except CourseGenerationError as exc:
+                            st.error(str(exc))
+                        except Exception as exc:
+                            st.error(f"生成失败：{exc}")
 
     courses = store.list_courses()
     if courses:
-        st.subheader("已生成课程")
+        st.subheader("已生成训练计划")
         selected_course = st.selectbox(
-            "选择课程",
+            "选择训练计划",
             courses,
             format_func=lambda row: f"#{row['id']} {row['title']}",
         )
         lessons = store.list_course_lessons(selected_course["id"])
-        for lesson in lessons:
-            with st.expander(f"第 {lesson['lesson_index']} 课：{lesson['title']}", expanded=False):
-                st.write(f"目标：{lesson['objective']}")
-                st.write("训练点：" + "、".join(lesson["knowledge_points"]))
-                st.write("易错风险：" + "、".join(lesson["mistake_risks"]))
-                st.write(f"苏格拉底模板：{lesson['recommended_template']}")
-                st.write(f"执行安排：{lesson['review_plan']}")
+        if not lessons:
+            st.caption("这个训练计划还没有小节。")
+            return
+        lesson_columns = st.columns(3)
+        for index, lesson in enumerate(lessons):
+            with lesson_columns[index % 3]:
+                render_lesson_plan_card(lesson)
                 if lesson["imported_weak_point_id"]:
-                    st.success(f"已导入为薄弱点 #{lesson['imported_weak_point_id']}")
+                    st.success(f"已导入为训练点 #{lesson['imported_weak_point_id']}")
                 else:
                     subject = st.selectbox(LESSON_SUBJECT_LABEL, SUBJECTS, key=f"lesson_subject_{lesson['id']}")
-                    if st.button(IMPORT_LESSON_BUTTON_LABEL, key=f"import_lesson_{lesson['id']}"):
+                    if st.button(IMPORT_LESSON_BUTTON_LABEL, key=f"import_lesson_{lesson['id']}", use_container_width=True):
                         weak_point_id = store.import_lesson_as_weak_point(lesson["id"], subject)
-                        st.success(f"已导入为薄弱点 #{weak_point_id}")
+                        st.success(f"已导入为训练点 #{weak_point_id}")
 
 
 def page_templates(store: Storage) -> None:
@@ -1444,7 +2033,7 @@ def page_system_backup(store: Storage) -> None:
 
     schema_version = get_schema_version(store)
     col1, col2, col3 = st.columns(3)
-    col1.metric("应用版本", APP_VERSION)
+    col1.metric("应用版本", get_app_version())
     col2.metric("数据库版本", schema_version)
     col3.metric("支持版本", SUPPORTED_SCHEMA_VERSION)
 

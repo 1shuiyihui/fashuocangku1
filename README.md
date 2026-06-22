@@ -12,6 +12,7 @@
 - 统计薄弱科目、薄弱考点和高频错因
 - 生成周度和月度复盘 Markdown 报告
 - v0.8.0 起，今日学习、薄弱点分析和周度/月度复盘围绕“录入训练点 → 苏格拉底训练 → 分析 → 复盘 → 再训练”的闭环组织，页面操作会真实跳转到后续训练或复盘步骤。
+- v0.9.0 起，左侧边栏、错题/薄弱点录入、苏格拉底训练、资料知识库和训练计划页面重构为工作台式 UI：上传/录入、追问训练、资料检索、计划生成和导入训练点都围绕同一学习闭环展示。
 
 ## 安装
 
@@ -119,6 +120,19 @@ github_token = "replace-with-github-token"
 ```
 
 开启后，应用启动时会先从 `cloud-data` 分支恢复 `data/fashuo.db`、`data/uploads/` 和 `data/documents/`，写入学习记录后会自动上传新的快照。`github_token` 只放在 Streamlit Secrets，不要提交到 GitHub。
+
+部署或重启后，页面顶部和左侧状态卡应显示：
+
+- `AI 已配置`
+- `GitHub 云端快照`
+
+当前 GitHub fine-grained token 配置提醒：
+
+- Expiration：`90 days (Sep 20, 2026)`，到期前需要重新生成并更新 Streamlit Secrets。
+- Repository access：`Only select repositories`。
+- Repository：`1shuiyihui/fashuocangku1`。
+- Repository permissions：`Contents` 必须为 `Read and write`。
+- Account permissions 不需要额外添加。
 
 ## 本地验收流程
 
