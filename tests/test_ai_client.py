@@ -43,6 +43,34 @@ class FakeSession:
         )
 
 
+class FlakySession:
+    def __init__(self):
+        self.calls = []
+
+    def post(self, url, headers, json, timeout):
+        self.calls.append(
+            {
+                "url": url,
+                "headers": headers,
+                "json": json,
+                "timeout": timeout,
+            }
+        )
+        if len(self.calls) == 1:
+            return FakeResponse({"error": "rate limited"}, status_code=429)
+        return FakeResponse(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "retry success",
+                        }
+                    }
+                ]
+            }
+        )
+
+
 def test_missing_api_key_raises_configuration_error():
     client = AIClient(api_base="https://api.example.com/v1", api_key="", model="test-model")
 
@@ -66,3 +94,20 @@ def test_chat_sends_openai_compatible_request():
     assert session.calls[0]["headers"]["Authorization"] == "Bearer key-123"
     assert session.calls[0]["json"]["model"] == "test-model"
     assert session.calls[0]["json"]["messages"][0]["content"] == "请开始追问"
+
+
+def test_chat_retries_transient_failures():
+    session = FlakySession()
+    client = AIClient(
+        api_base="https://api.example.com/v1",
+        api_key="key-123",
+        model="test-model",
+        http_session=session,
+        retry_attempts=2,
+        retry_backoff_seconds=0,
+    )
+
+    content = client.chat([{"role": "user", "content": "hello"}])
+
+    assert content == "retry success"
+    assert len(session.calls) == 2

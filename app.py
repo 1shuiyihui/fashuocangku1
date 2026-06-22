@@ -79,11 +79,48 @@ def get_storage() -> Storage:
 
 
 def get_ai_client() -> AIClient:
+    defaults = get_default_ai_config()
     return AIClient(
-        api_base=st.session_state.get("api_base", ""),
-        api_key=st.session_state.get("api_key", ""),
-        model=st.session_state.get("model", ""),
+        api_base=st.session_state.get("api_base", defaults["api_base"]),
+        api_key=st.session_state.get("api_key", defaults["api_key"]),
+        model=st.session_state.get("model", defaults["model"]),
     )
+
+
+def get_default_ai_config(secrets: object | None = None) -> dict[str, str]:
+    if secrets is None:
+        try:
+            secrets = st.secrets
+        except Exception:
+            secrets = {}
+
+    ai_secrets = _mapping_get(secrets, "ai", {})
+    return {
+        "api_base": str(
+            _mapping_get(ai_secrets, "api_base", "")
+            or _mapping_get(secrets, "API_BASE", "")
+            or "https://api.openai.com/v1"
+        ),
+        "model": str(
+            _mapping_get(ai_secrets, "model", "")
+            or _mapping_get(secrets, "MODEL", "")
+            or "gpt-4.1-mini"
+        ),
+        "api_key": str(
+            _mapping_get(ai_secrets, "api_key", "")
+            or _mapping_get(secrets, "API_KEY", "")
+            or ""
+        ),
+    }
+
+
+def _mapping_get(mapping: object, key: str, default: object = "") -> object:
+    if not hasattr(mapping, "get"):
+        return default
+    try:
+        return mapping.get(key, default)  # type: ignore[attr-defined]
+    except Exception:
+        return default
 
 
 def main() -> None:
@@ -111,6 +148,7 @@ def main() -> None:
 
 
 def render_sidebar() -> None:
+    ai_defaults = get_default_ai_config()
     st.session_state["beginner_mode"] = st.sidebar.checkbox(
         "新手模式",
         value=st.session_state.get("beginner_mode", BEGINNER_MODE_DEFAULT),
@@ -123,15 +161,15 @@ def render_sidebar() -> None:
     ):
         st.session_state["api_base"] = st.text_input(
             "API Base",
-            value=st.session_state.get("api_base", "https://api.openai.com/v1"),
+            value=st.session_state.get("api_base", ai_defaults["api_base"]),
         )
         st.session_state["model"] = st.text_input(
             "Model",
-            value=st.session_state.get("model", "gpt-4.1-mini"),
+            value=st.session_state.get("model", ai_defaults["model"]),
         )
         st.session_state["api_key"] = st.text_input(
             "API Key",
-            value=st.session_state.get("api_key", ""),
+            value=st.session_state.get("api_key", ai_defaults["api_key"]),
             type="password",
         )
 

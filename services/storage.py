@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 import json
 import shutil
 import sqlite3
@@ -10,24 +12,46 @@ from typing import Any
 from prompts.seed_templates import SEED_TEMPLATES
 
 
+SQLITE_BUSY_TIMEOUT_MS = 5000
+MAX_UPLOAD_BYTES = 15 * 1024 * 1024
+MAX_DOCUMENT_UPLOAD_BYTES = 30 * 1024 * 1024
+IMAGE_UPLOAD_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+DOCUMENT_UPLOAD_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".txt", ".md", ".markdown"}
+
+
 class Storage:
     def __init__(
         self,
         db_path: Path | str = "data/fashuo.db",
         uploads_dir: Path | str = "data/uploads",
         documents_dir: Path | str = "data/documents",
+        max_upload_bytes: int = MAX_UPLOAD_BYTES,
+        max_document_upload_bytes: int = MAX_DOCUMENT_UPLOAD_BYTES,
     ):
         self.db_path = Path(db_path)
         self.uploads_dir = Path(uploads_dir)
         self.documents_dir = Path(documents_dir)
+        self.max_upload_bytes = max_upload_bytes
+        self.max_document_upload_bytes = max_document_upload_bytes
 
-    def connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def connect(self) -> Iterator[sqlite3.Connection]:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.uploads_dir.mkdir(parents=True, exist_ok=True)
         self.documents_dir.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=SQLITE_BUSY_TIMEOUT_MS / 1000)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
+            conn.execute("PRAGMA journal_mode = WAL")
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def init_db(self) -> None:
         with self.connect() as conn:
@@ -153,6 +177,23 @@ class Storage:
                     result_chunk_ids TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
+
+                CREATE INDEX IF NOT EXISTS idx_weak_points_created_at
+                    ON weak_points(created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_weak_points_subject
+                    ON weak_points(subject);
+                CREATE INDEX IF NOT EXISTS idx_sessions_status_started_at
+                    ON sessions(status, started_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_sessions_weak_point_id
+                    ON sessions(weak_point_id);
+                CREATE INDEX IF NOT EXISTS idx_messages_session_id
+                    ON messages(session_id, id);
+                CREATE INDEX IF NOT EXISTS idx_documents_status_created_at
+                    ON documents(status, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_document_chunks_document_id
+                    ON document_chunks(document_id, chunk_index);
+                CREATE INDEX IF NOT EXISTS idx_course_lessons_course_id
+                    ON course_lessons(course_id, lesson_index);
                 """
             )
 
@@ -202,8 +243,15 @@ class Storage:
         if uploaded_file is None:
             return ""
         suffix = Path(uploaded_file.name).suffix or ".png"
+        self._validate_upload(
+            uploaded_file,
+            max_bytes=self.max_upload_bytes,
+            allowed_extensions=IMAGE_UPLOAD_EXTENSIONS,
+            label="image upload",
+        )
         target = self.uploads_dir / f"{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}{suffix}"
         self.uploads_dir.mkdir(parents=True, exist_ok=True)
+        self._rewind_upload(uploaded_file)
         with target.open("wb") as handle:
             shutil.copyfileobj(uploaded_file, handle)
         return str(target)
@@ -213,8 +261,15 @@ class Storage:
             return ""
         suffix = Path(uploaded_file.name).suffix
         stem = Path(uploaded_file.name).stem or "document"
+        self._validate_upload(
+            uploaded_file,
+            max_bytes=self.max_document_upload_bytes,
+            allowed_extensions=DOCUMENT_UPLOAD_EXTENSIONS,
+            label="document upload",
+        )
         target = self.documents_dir / f"{stem}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}{suffix}"
         self.documents_dir.mkdir(parents=True, exist_ok=True)
+        self._rewind_upload(uploaded_file)
         with target.open("wb") as handle:
             shutil.copyfileobj(uploaded_file, handle)
         return str(target)
@@ -659,3 +714,40 @@ class Storage:
     @staticmethod
     def _dict(row: sqlite3.Row) -> dict[str, Any]:
         return dict(row)
+
+    @staticmethod
+    def _upload_size(uploaded_file: Any) -> int | None:
+        size = getattr(uploaded_file, "size", None)
+        if isinstance(size, int):
+            return size
+        if hasattr(uploaded_file, "getbuffer"):
+            return len(uploaded_file.getbuffer())
+        if not all(hasattr(uploaded_file, attr) for attr in ("tell", "seek")):
+            return None
+        current = uploaded_file.tell()
+        uploaded_file.seek(0, 2)
+        measured = uploaded_file.tell()
+        uploaded_file.seek(current)
+        return int(measured)
+
+    @staticmethod
+    def _rewind_upload(uploaded_file: Any) -> None:
+        if hasattr(uploaded_file, "seek"):
+            uploaded_file.seek(0)
+
+    @classmethod
+    def _validate_upload(
+        cls,
+        uploaded_file: Any,
+        max_bytes: int,
+        allowed_extensions: set[str],
+        label: str,
+    ) -> None:
+        suffix = Path(uploaded_file.name).suffix.lower()
+        if suffix not in allowed_extensions:
+            raise ValueError(f"{label} type is not supported: {suffix or 'unknown'}")
+        size = cls._upload_size(uploaded_file)
+        if size is not None and size > max_bytes:
+            max_mb = max_bytes / 1024 / 1024
+            actual_mb = size / 1024 / 1024
+            raise ValueError(f"{label} is too large: {actual_mb:.1f} MB > {max_mb:.1f} MB")

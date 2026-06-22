@@ -54,3 +54,23 @@ def test_beginner_mode_hides_advanced_prompt_editor_by_default():
     assert app.should_show_prompt_editor(beginner_mode=True, advanced_enabled=False) is False
     assert app.should_show_prompt_editor(beginner_mode=True, advanced_enabled=True) is True
     assert app.should_show_prompt_editor(beginner_mode=False, advanced_enabled=False) is True
+
+
+def test_default_ai_config_reads_streamlit_secrets_shape():
+    import app
+
+    config = app.get_default_ai_config(
+        {
+            "ai": {
+                "api_base": "https://api.example.com/v1",
+                "model": "example-model",
+                "api_key": "secret-key",
+            }
+        }
+    )
+
+    assert config == {
+        "api_base": "https://api.example.com/v1",
+        "model": "example-model",
+        "api_key": "secret-key",
+    }
