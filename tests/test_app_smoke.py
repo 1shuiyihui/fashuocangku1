@@ -60,7 +60,7 @@ def test_v012_beginner_guide_and_course_import_labels():
     import app
     from services.versioning import APP_VERSION
 
-    assert APP_VERSION == "0.12.0"
+    assert APP_VERSION == "0.13.0"
     assert app.COURSE_GENERATION_SECTION_TITLE == "3. 生成可执行训练计划并导入训练点"
     assert app.LESSON_SUBJECT_LABEL == "训练点科目"
     assert app.IMPORT_LESSON_BUTTON_LABEL == "导入为训练点"
@@ -141,7 +141,7 @@ def test_v012_workflow_navigation_contract():
     import app
     from services.versioning import APP_VERSION
 
-    assert APP_VERSION == "0.12.0"
+    assert APP_VERSION == "0.13.0"
     assert app.FOCUS_WEAK_POINT_KEY == "focus_weak_point_id"
     assert app.REVIEW_FOCUS_KEY == "review_focus_keyword"
     assert app.WORKFLOW_LOOP_STEPS == [
@@ -167,8 +167,8 @@ def test_v012_workspace_ui_contract():
     import app
     from services.versioning import APP_VERSION
 
-    assert APP_VERSION == "0.12.0"
-    assert app.get_app_version() == "0.12.0"
+    assert APP_VERSION == "0.13.0"
+    assert app.get_app_version() == "0.13.0"
     assert app.ENTRY_WORKFLOW_STEPS == ["上传或拍照", "结构化训练点", "AI 抽取与确认"]
     assert app.KNOWLEDGE_WORKFLOW_STEPS == [
         "上传并建立索引",
@@ -189,6 +189,7 @@ def test_v012_workspace_ui_contract():
     assert app.DEFAULT_MIN_DIALOGUE_ROUNDS == 3
     assert app.MAX_DIALOGUE_ROUND_OPTIONS[0] == "不限制"
     assert app.ERROR_ANALYSIS_SECTIONS == ["错误还原", "根因证据", "复盘练习", "变式练习", "溯源记录"]
+    assert app.VOICE_INPUT_SECTIONS == ["语音输入", "转写草稿", "提交文本"]
 
 
 def test_v010_css_contains_workspace_layouts():

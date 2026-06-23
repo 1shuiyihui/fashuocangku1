@@ -30,6 +30,7 @@ from services.provenance import save_provenance_files
 from services.rag import format_rag_context, search_chunks
 from services.storage import Storage
 from services.versioning import APP_VERSION, SUPPORTED_SCHEMA_VERSION
+from services.voice_input import merge_voice_text, normalize_voice_payload, voice_input
 from services.workflow import build_learning_loop_state, build_review_dashboard_state
 
 
@@ -79,6 +80,7 @@ MAX_DIALOGUE_ROUND_OPTIONS = ["不限制", "3轮", "4轮", "5轮", "6轮", "8轮
 REVIEW_WORKFLOW_STEPS = ["选择周期", "查看训练队列", "定位高频问题", "安排下一轮训练", "导出复盘"]
 REVIEW_DASHBOARD_SECTIONS = ["学习概况", "高频薄弱考点", "高频错因", "下一轮训练计划"]
 ERROR_ANALYSIS_SECTIONS = ["错误还原", "根因证据", "复盘练习", "变式练习", "溯源记录"]
+VOICE_INPUT_SECTIONS = ["语音输入", "转写草稿", "提交文本"]
 SIDEBAR_STATUS_TITLE = "系统状态"
 SIDEBAR_WORKFLOW_TITLE = "学习闭环"
 APP_SHELL_STYLE = """
@@ -1125,6 +1127,74 @@ def save_review_report_provenance_once(
     st.session_state["last_review_report_trace"] = signature
 
 
+def apply_voice_payload_to_state(
+    payload: object,
+    state_key: str,
+    dedupe_key: str,
+) -> str:
+    transcript = normalize_voice_payload(payload)
+    if not transcript:
+        return str(st.session_state.get(state_key, ""))
+    if st.session_state.get(dedupe_key) == transcript:
+        return str(st.session_state.get(state_key, ""))
+    st.session_state[state_key] = merge_voice_text(str(st.session_state.get(state_key, "")), transcript)
+    st.session_state[dedupe_key] = transcript
+    return str(st.session_state.get(state_key, ""))
+
+
+def render_voice_input_panel(
+    label: str,
+    component_key: str,
+    target_state_key: str,
+    helper_text: str,
+) -> None:
+    with st.container(border=True):
+        st.markdown(f"**{VOICE_INPUT_SECTIONS[0]}**")
+        payload = voice_input(label=label, key=component_key, helper_text=helper_text)
+        apply_voice_payload_to_state(
+            payload,
+            target_state_key,
+            f"{target_state_key}_last_voice_transcript",
+        )
+        st.caption("语音识别后会进入下面的文字草稿；提交前可以继续手动修改。")
+
+
+def submit_training_answer(store: Storage, session_id: int, user_input: str, completed_rounds: int) -> None:
+    user_input = user_input.strip()
+    if not user_input:
+        st.error("回答不能为空。")
+        return
+    store.add_message(session_id, "user", user_input)
+    session = store.get_session(session_id)
+    history = [{"role": "system", "content": session["prompt_snapshot"]}]
+    history.extend(
+        {"role": message["role"], "content": message["content"]}
+        for message in store.list_messages(session_id)
+    )
+    try:
+        reply = get_ai_client().chat(history)
+        store.add_message(session_id, "assistant", reply)
+        record_provenance_event(
+            store,
+            entity_type="session",
+            entity_id=session_id,
+            event_type="training_followup_ai_call",
+            input_payload={
+                "user_input": user_input,
+                "history": history,
+                "completed_rounds": completed_rounds + 1,
+                "input_method": "voice_or_text_draft",
+            },
+            output_text=reply,
+            metadata={"model": st.session_state.get("model", get_default_ai_config()["model"])},
+        )
+        st.rerun()
+    except AIConfigurationError as exc:
+        st.warning(str(exc))
+    except Exception as exc:
+        st.error(f"AI 调用失败：{exc}")
+
+
 @st.cache_resource
 def get_storage() -> Storage:
     cloud_config = get_persistence_config()
@@ -1836,6 +1906,25 @@ def page_entry(store: Storage) -> None:
         "第一次只需要补齐科目、题型、考点、错因和掌握度；照片、题干和答案可以作为后续追问依据。",
     )
     render_process_steps(ENTRY_WORKFLOW_STEPS)
+    for state_key in ("entry_question_text", "entry_reference_answer", "entry_notes"):
+        st.session_state.setdefault(state_key, "")
+    voice_target = st.radio(
+        "语音填入位置",
+        ["题干", "参考答案", "备注"],
+        horizontal=True,
+        help="语音识别结果会追加到选中的文本框；提交前可以继续手动修改。",
+    )
+    voice_target_map = {
+        "题干": "entry_question_text",
+        "参考答案": "entry_reference_answer",
+        "备注": "entry_notes",
+    }
+    render_voice_input_panel(
+        "录入页语音转文字",
+        "entry_voice_input",
+        voice_target_map[voice_target],
+        "适合口述题干、答案采分点或备注。识别后请在下方文本框里核对。",
+    )
     with st.form("weak_point_form", clear_on_submit=True):
         source_col, structure_col, ai_col = st.columns([1, 1.35, 1])
         with source_col:
@@ -1888,15 +1977,17 @@ def page_entry(store: Storage) -> None:
                 "题干，可选",
                 height=120,
                 placeholder="可以先空着；后面需要案例分析时再补。",
+                key="entry_question_text",
             )
         with answer_col:
             reference_answer = st.text_area(
                 "参考答案，可选",
                 height=120,
                 placeholder="可以粘贴答案或写采分点。",
+                key="entry_reference_answer",
             )
         with note_col:
-            notes = st.text_area("备注，可选", height=120, placeholder="例如：书名、页码、题号。")
+            notes = st.text_area("备注，可选", height=120, placeholder="例如：书名、页码、题号。", key="entry_notes")
         submitted = st.form_submit_button("保存训练点", type="primary")
 
     if submitted:
@@ -2187,36 +2278,30 @@ def page_training(store: Storage) -> None:
                 unsafe_allow_html=True,
             )
 
+    draft_key = f"training_voice_draft_{session_id}"
+    st.session_state.setdefault(draft_key, "")
+    voice_col, draft_col = st.columns([1, 1.2])
+    with voice_col:
+        render_voice_input_panel(
+            "回答语音输入",
+            f"training_voice_input_{session_id}",
+            draft_key,
+            "口述上一轮问题的答案，识别后会进入右侧草稿。",
+        )
+    with draft_col:
+        st.markdown(f"**{VOICE_INPUT_SECTIONS[1]}**")
+        draft_answer = st.text_area(
+            "语音/文字回答草稿",
+            key=draft_key,
+            height=142,
+            placeholder="可以语音转写后修改，也可以直接在这里输入回答。",
+        )
+        if st.button(VOICE_INPUT_SECTIONS[2], type="primary", key=f"submit_voice_draft_{session_id}"):
+            submit_training_answer(store, int(session_id), draft_answer, completed_rounds)
+
     user_input = st.chat_input("回答上一个问题")
     if user_input:
-        store.add_message(session_id, "user", user_input)
-        session = store.get_session(session_id)
-        history = [{"role": "system", "content": session["prompt_snapshot"]}]
-        history.extend(
-            {"role": message["role"], "content": message["content"]}
-            for message in store.list_messages(session_id)
-        )
-        try:
-            reply = get_ai_client().chat(history)
-            store.add_message(session_id, "assistant", reply)
-            record_provenance_event(
-                store,
-                entity_type="session",
-                entity_id=session_id,
-                event_type="training_followup_ai_call",
-                input_payload={
-                    "user_input": user_input,
-                    "history": history,
-                    "completed_rounds": completed_rounds + 1,
-                },
-                output_text=reply,
-                metadata={"model": st.session_state.get("model", get_default_ai_config()["model"])},
-            )
-            st.rerun()
-        except AIConfigurationError as exc:
-            st.warning(str(exc))
-        except Exception as exc:
-            st.error(f"AI 调用失败：{exc}")
+        submit_training_answer(store, int(session_id), user_input, completed_rounds)
 
     with st.form("finish_session_form"):
         st.markdown("**保存复盘**")

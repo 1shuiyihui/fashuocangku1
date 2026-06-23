@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root {
+        color-scheme: light;
+        font-family:
+          Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei",
+          sans-serif;
+      }
+      body {
+        margin: 0;
+        color: #111827;
+        background: transparent;
+      }
+      .voice-box {
+        border: 1px solid #d8dee9;
+        border-radius: 8px;
+        background: #fff;
+        padding: 14px;
+      }
+      .voice-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 10px;
+      }
+      .voice-title {
+        font-size: 15px;
+        font-weight: 650;
+      }
+      .voice-status {
+        min-width: 72px;
+        color: #667085;
+        font-size: 12px;
+        text-align: right;
+      }
+      .voice-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+      button {
+        border: 1px solid #d0d5dd;
+        border-radius: 7px;
+        background: #fff;
+        color: #101828;
+        cursor: pointer;
+        font-size: 13px;
+        line-height: 1;
+        padding: 9px 12px;
+      }
+      button.primary {
+        border-color: #2563eb;
+        background: #2563eb;
+        color: #fff;
+      }
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
+      }
+      .transcript {
+        min-height: 40px;
+        border-radius: 7px;
+        background: #f4f6f9;
+        color: #1f2937;
+        font-size: 14px;
+        line-height: 1.5;
+        padding: 10px 12px;
+        white-space: pre-wrap;
+      }
+      .helper {
+        margin-top: 8px;
+        color: #667085;
+        font-size: 12px;
+      }
+      .error {
+        color: #b42318;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="voice-box">
+      <div class="voice-head">
+        <div class="voice-title" id="label">语音输入</div>
+        <div class="voice-status" id="status">待开始</div>
+      </div>
+      <div class="voice-actions">
+        <button class="primary" id="start" type="button">开始语音输入</button>
+        <button id="stop" type="button" disabled>停止</button>
+        <button id="clear" type="button">清空</button>
+        <button id="copy" type="button">复制文字</button>
+      </div>
+      <div class="transcript" id="transcript">识别到的文字会显示在这里。</div>
+      <div class="helper" id="helper">建议使用 Chrome 或 Edge，并允许浏览器访问麦克风。</div>
+    </div>
+
+    <script>
+      const Streamlit = {
+        setComponentReady() {
+          window.parent.postMessage(
+            { type: "streamlit:componentReady", apiVersion: 1 },
+            "*",
+          );
+        },
+        setFrameHeight(height) {
+          window.parent.postMessage(
+            { type: "streamlit:setFrameHeight", height },
+            "*",
+          );
+        },
+        setComponentValue(value) {
+          window.parent.postMessage(
+            {
+              type: "streamlit:setComponentValue",
+              value,
+            },
+            "*",
+          );
+        },
+      };
+
+      const SpeechRecognition =
+        window.SpeechRecognition || window.webkitSpeechRecognition;
+      const startButton = document.getElementById("start");
+      const stopButton = document.getElementById("stop");
+      const clearButton = document.getElementById("clear");
+      const copyButton = document.getElementById("copy");
+      const statusNode = document.getElementById("status");
+      const transcriptNode = document.getElementById("transcript");
+      const helperNode = document.getElementById("helper");
+      const labelNode = document.getElementById("label");
+      let recognition = null;
+      let finalTranscript = "";
+      let language = "zh-CN";
+
+      function sendValue(interimText = "") {
+        const text = `${finalTranscript}${interimText}`.trim();
+        Streamlit.setComponentValue({
+          text,
+          final_text: finalTranscript.trim(),
+          interim_text: interimText.trim(),
+          language,
+          timestamp: Date.now(),
+        });
+      }
+
+      function setListening(isListening) {
+        startButton.disabled = isListening;
+        stopButton.disabled = !isListening;
+        statusNode.textContent = isListening ? "识别中" : "已停止";
+      }
+
+      function setTranscript(interimText = "") {
+        const text = `${finalTranscript}${interimText}`.trim();
+        transcriptNode.textContent = text || "识别到的文字会显示在这里。";
+      }
+
+      function ensureRecognition() {
+        if (!SpeechRecognition) {
+          statusNode.textContent = "不可用";
+          helperNode.textContent =
+            "当前浏览器不支持语音识别，请使用 Chrome 或 Edge，或改用文字输入。";
+          helperNode.classList.add("error");
+          startButton.disabled = true;
+          return null;
+        }
+        const instance = new SpeechRecognition();
+        instance.lang = language;
+        instance.continuous = true;
+        instance.interimResults = true;
+        instance.onstart = () => setListening(true);
+        instance.onend = () => setListening(false);
+        instance.onerror = (event) => {
+          statusNode.textContent = "识别失败";
+          helperNode.textContent = `语音识别失败：${event.error || "unknown"}`;
+          helperNode.classList.add("error");
+        };
+        instance.onresult = (event) => {
+          let interimText = "";
+          for (let i = event.resultIndex; i < event.results.length; i += 1) {
+            const piece = event.results[i][0].transcript;
+            if (event.results[i].isFinal) {
+              finalTranscript += piece;
+            } else {
+              interimText += piece;
+            }
+          }
+          setTranscript(interimText);
+          sendValue(interimText);
+        };
+        return instance;
+      }
+
+      startButton.addEventListener("click", () => {
+        helperNode.classList.remove("error");
+        helperNode.textContent = "正在听写。说完后可以点停止，再在页面草稿里修改。";
+        recognition = ensureRecognition();
+        if (!recognition) return;
+        recognition.start();
+      });
+
+      stopButton.addEventListener("click", () => {
+        if (recognition) recognition.stop();
+        sendValue("");
+      });
+
+      clearButton.addEventListener("click", () => {
+        finalTranscript = "";
+        setTranscript("");
+        sendValue("");
+      });
+
+      copyButton.addEventListener("click", async () => {
+        const text = `${finalTranscript}`.trim();
+        if (!text || !navigator.clipboard) return;
+        await navigator.clipboard.writeText(text);
+        statusNode.textContent = "已复制";
+      });
+
+      window.addEventListener("message", (event) => {
+        if (!event.data || event.data.type !== "streamlit:render") return;
+        const args = event.data.args || {};
+        language = args.language || "zh-CN";
+        labelNode.textContent = args.label || "语音输入";
+        helperNode.textContent =
+          args.helperText || "建议使用 Chrome 或 Edge，并允许浏览器访问麦克风。";
+        if (recognition) recognition.lang = language;
+        Streamlit.setFrameHeight(document.body.scrollHeight);
+      });
+
+      Streamlit.setComponentReady();
+      Streamlit.setFrameHeight(document.body.scrollHeight);
+    </script>
+  </body>
+</html>
